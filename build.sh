@@ -78,7 +78,7 @@ mkdir -p "$OUT_DIR"
 
 if [[ -n "$SMW_DATA_ARCHIVE_PATH" ]]; then
 	mkdir -p "$OUT_DIR/data"
-	gtar xf "$SMW_DATA_ARCHIVE_PATH" --strip-components=1 --overwrite -C "$OUT_DIR/data" 2>&1
+	tar xf "$SMW_DATA_ARCHIVE_PATH" --strip-components=1 --overwrite -C "$OUT_DIR/data" 2>&1
 	echo "Assets copied to $OUT_DIR"
 fi
 
