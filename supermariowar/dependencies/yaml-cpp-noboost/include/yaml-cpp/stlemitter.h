@@ -1,11 +1,20 @@
 #ifndef STLEMITTER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define STLEMITTER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
+
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
 
 #include <vector>
 #include <list>
@@ -16,8 +25,8 @@ namespace YAML {
 template <typename Seq>
 inline Emitter& EmitSeq(Emitter& emitter, const Seq& seq) {
   emitter << BeginSeq;
-  for (typename Seq::const_iterator it = seq.begin(); it != seq.end(); ++it)
-    emitter << *it;
+  for (const auto& v : seq)
+    emitter << v;
   emitter << EndSeq;
   return emitter;
 }
@@ -39,10 +48,9 @@ inline Emitter& operator<<(Emitter& emitter, const std::set<T>& v) {
 
 template <typename K, typename V>
 inline Emitter& operator<<(Emitter& emitter, const std::map<K, V>& m) {
-  typedef typename std::map<K, V> map;
   emitter << BeginMap;
-  for (typename map::const_iterator it = m.begin(); it != m.end(); ++it)
-    emitter << Key << it->first << Value << it->second;
+  for (const auto& v : m)
+    emitter << Key << v.first << Value << v.second;
   emitter << EndMap;
   return emitter;
 }

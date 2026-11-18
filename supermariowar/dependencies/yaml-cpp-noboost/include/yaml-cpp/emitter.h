@@ -1,24 +1,41 @@
 #ifndef EMITTER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define EMITTER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
 
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
+
+#include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <type_traits>
+
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#include <string_view>
+#endif
 
 #include "yaml-cpp/binary.h"
 #include "yaml-cpp/dll.h"
 #include "yaml-cpp/emitterdef.h"
 #include "yaml-cpp/emittermanip.h"
-#include "yaml-cpp/noncopyable.h"
 #include "yaml-cpp/null.h"
 #include "yaml-cpp/ostream_wrapper.h"
+#include "yaml-cpp/fptostring.h"
 
 namespace YAML {
 class Binary;
@@ -28,10 +45,12 @@ struct _Null;
 namespace YAML {
 class EmitterState;
 
-class YAML_CPP_API Emitter : private noncopyable {
+class YAML_CPP_API Emitter {
  public:
   Emitter();
   explicit Emitter(std::ostream& stream);
+  Emitter(const Emitter&) = delete;
+  Emitter& operator=(const Emitter&) = delete;
   ~Emitter();
 
   // output
@@ -40,12 +59,13 @@ class YAML_CPP_API Emitter : private noncopyable {
 
   // state checking
   bool good() const;
-  const std::string GetLastError() const;
+  std::string GetLastError() const;
 
   // global setters
   bool SetOutputCharset(EMITTER_MANIP value);
   bool SetStringFormat(EMITTER_MANIP value);
   bool SetBoolFormat(EMITTER_MANIP value);
+  bool SetNullFormat(EMITTER_MANIP value);
   bool SetIntBase(EMITTER_MANIP value);
   bool SetSeqFormat(EMITTER_MANIP value);
   bool SetMapFormat(EMITTER_MANIP value);
@@ -54,13 +74,17 @@ class YAML_CPP_API Emitter : private noncopyable {
   bool SetPostCommentIndent(std::size_t n);
   bool SetFloatPrecision(std::size_t n);
   bool SetDoublePrecision(std::size_t n);
+  bool SetShowTrailingZero(bool value);
+  void RestoreGlobalModifiedSettings();
 
   // local setters
   Emitter& SetLocalValue(EMITTER_MANIP value);
   Emitter& SetLocalIndent(const _Indent& indent);
+  Emitter& SetLocalWrap(const _Wrap& wrap);
   Emitter& SetLocalPrecision(const _Precision& precision);
 
   // overloads of write
+  Emitter& Write(const char* str, std::size_t size);
   Emitter& Write(const std::string& str);
   Emitter& Write(bool b);
   Emitter& Write(char ch);
@@ -82,6 +106,7 @@ class YAML_CPP_API Emitter : private noncopyable {
   void SetStreamablePrecision(std::stringstream&) {}
   std::size_t GetFloatPrecision() const;
   std::size_t GetDoublePrecision() const;
+  bool GetShowTrailingZero() const;
 
   void PrepareIntegralStream(std::stringstream& stream) const;
   void StartedScalar();
@@ -119,7 +144,7 @@ class YAML_CPP_API Emitter : private noncopyable {
   void SpaceOrIndentTo(bool requireSpace, std::size_t indent);
 
   const char* ComputeFullBoolName(bool b) const;
-  bool CanEmitNewline() const;
+  const char* ComputeNullName() const;
 
  private:
   std::unique_ptr<EmitterState> m_pState;
@@ -134,6 +159,7 @@ inline Emitter& Emitter::WriteIntegralType(T value) {
   PrepareNode(EmitterNodeType::Scalar);
 
   std::stringstream stream;
+  stream.imbue(std::locale::classic());
   PrepareIntegralStream(stream);
   stream << value;
   m_stream << stream.str();
@@ -151,8 +177,38 @@ inline Emitter& Emitter::WriteStreamable(T value) {
   PrepareNode(EmitterNodeType::Scalar);
 
   std::stringstream stream;
+  stream.imbue(std::locale::classic());
   SetStreamablePrecision<T>(stream);
-  stream << value;
+
+  bool special = false;
+  if (std::is_floating_point<T>::value) {
+    if ((std::numeric_limits<T>::has_quiet_NaN ||
+         std::numeric_limits<T>::has_signaling_NaN) &&
+        std::isnan(value)) {
+      special = true;
+      stream << ".nan";
+    } else if (std::numeric_limits<T>::has_infinity && std::isinf(value)) {
+      special = true;
+      if (std::signbit(value)) {
+        stream << "-.inf";
+      } else {
+        stream << ".inf";
+      }
+    }
+  }
+
+  if (!special) {
+    auto value_as_str = FpToString(value, static_cast<size_t>(stream.precision()));
+    if (GetShowTrailingZero()) {
+        bool isInScientificNotation = (value_as_str.find('e') != std::string::npos);
+        bool hasDot                 = (value_as_str.find('.') != std::string::npos);
+        if (!isInScientificNotation && !hasDot) {
+            value_as_str += ".0";
+        }
+    }
+    stream << value_as_str;
+  }
+
   m_stream << stream.str();
 
   StartedScalar();
@@ -171,8 +227,13 @@ inline void Emitter::SetStreamablePrecision<double>(std::stringstream& stream) {
 }
 
 // overloads of insertion
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+inline Emitter& operator<<(Emitter& emitter, const std::string_view& v) {
+  return emitter.Write(v.data(), v.size());
+}
+#endif
 inline Emitter& operator<<(Emitter& emitter, const std::string& v) {
-  return emitter.Write(v);
+  return emitter.Write(v.data(), v.size());
 }
 inline Emitter& operator<<(Emitter& emitter, bool v) {
   return emitter.Write(v);
@@ -181,7 +242,7 @@ inline Emitter& operator<<(Emitter& emitter, char v) {
   return emitter.Write(v);
 }
 inline Emitter& operator<<(Emitter& emitter, unsigned char v) {
-  return emitter.Write(static_cast<char>(v));
+  return emitter.WriteIntegralType(static_cast<unsigned int>(v));
 }
 inline Emitter& operator<<(Emitter& emitter, const _Alias& v) {
   return emitter.Write(v);
@@ -203,7 +264,7 @@ inline Emitter& operator<<(Emitter& emitter, const Binary& b) {
 }
 
 inline Emitter& operator<<(Emitter& emitter, const char* v) {
-  return emitter.Write(std::string(v));
+  return emitter.Write(v, std::strlen(v));
 }
 
 inline Emitter& operator<<(Emitter& emitter, int v) {
@@ -246,9 +307,13 @@ inline Emitter& operator<<(Emitter& emitter, _Indent indent) {
   return emitter.SetLocalIndent(indent);
 }
 
+inline Emitter& operator<<(Emitter& emitter, _Wrap wrap) {
+  return emitter.SetLocalWrap(wrap);
+}
+
 inline Emitter& operator<<(Emitter& emitter, _Precision precision) {
   return emitter.SetLocalPrecision(precision);
 }
-}
+}  // namespace YAML
 
 #endif  // EMITTER_H_62B23520_7C8E_11DE_8A39_0800200C9A66

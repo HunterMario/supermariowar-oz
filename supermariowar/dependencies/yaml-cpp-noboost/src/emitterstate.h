@@ -43,6 +43,7 @@ class EmitterState {
 
   // node handling
   void SetAnchor();
+  void SetAlias();
   void SetTag();
   void SetNonContent();
   void SetLongKey();
@@ -58,13 +59,14 @@ class EmitterState {
 
   GroupType::value CurGroupType() const;
   FlowType::value CurGroupFlowType() const;
-  int CurGroupIndent() const;
+  std::size_t CurGroupIndent() const;
   std::size_t CurGroupChildCount() const;
   bool CurGroupLongKey() const;
 
-  int LastIndent() const;
-  int CurIndent() const { return m_curIndent; }
+  std::size_t LastIndent() const;
+  std::size_t CurIndent() const { return m_curIndent; }
   bool HasAnchor() const { return m_hasAnchor; }
+  bool HasAlias() const { return m_hasAlias; }
   bool HasTag() const { return m_hasTag; }
   bool HasBegunNode() const {
     return m_hasAnchor || m_hasTag || m_hasNonContent;
@@ -72,6 +74,7 @@ class EmitterState {
   bool HasBegunContent() const { return m_hasAnchor || m_hasTag; }
 
   void ClearModifiedSettings();
+  void RestoreGlobalModifiedSettings();
 
   // formatters
   void SetLocalValue(EMITTER_MANIP value);
@@ -91,16 +94,22 @@ class EmitterState {
   bool SetBoolCaseFormat(EMITTER_MANIP value, FmtScope::value scope);
   EMITTER_MANIP GetBoolCaseFormat() const { return m_boolCaseFmt.get(); }
 
+  bool SetNullFormat(EMITTER_MANIP value, FmtScope::value scope);
+  EMITTER_MANIP GetNullFormat() const { return m_nullFmt.get(); }
+
   bool SetIntFormat(EMITTER_MANIP value, FmtScope::value scope);
   EMITTER_MANIP GetIntFormat() const { return m_intFmt.get(); }
 
   bool SetIndent(std::size_t value, FmtScope::value scope);
-  int GetIndent() const { return m_indent.get(); }
+  std::size_t GetIndent() const { return m_indent.get(); }
 
   bool SetPreCommentIndent(std::size_t value, FmtScope::value scope);
-  int GetPreCommentIndent() const { return m_preCommentIndent.get(); }
+  std::size_t GetPreCommentIndent() const { return m_preCommentIndent.get(); }
   bool SetPostCommentIndent(std::size_t value, FmtScope::value scope);
-  int GetPostCommentIndent() const { return m_postCommentIndent.get(); }
+  std::size_t GetPostCommentIndent() const { return m_postCommentIndent.get(); }
+
+  bool SetWrap(std::size_t value, FmtScope::value scope);
+  std::size_t GetWrap() const { return m_wrap.get(); }
 
   bool SetFlowType(GroupType::value groupType, EMITTER_MANIP value,
                    FmtScope::value scope);
@@ -109,10 +118,12 @@ class EmitterState {
   bool SetMapKeyFormat(EMITTER_MANIP value, FmtScope::value scope);
   EMITTER_MANIP GetMapKeyFormat() const { return m_mapKeyFmt.get(); }
 
-  bool SetFloatPrecision(int value, FmtScope::value scope);
+  bool SetFloatPrecision(std::size_t value, FmtScope::value scope);
   std::size_t GetFloatPrecision() const { return m_floatPrecision.get(); }
-  bool SetDoublePrecision(int value, FmtScope::value scope);
+  bool SetDoublePrecision(std::size_t value, FmtScope::value scope);
   std::size_t GetDoublePrecision() const { return m_doublePrecision.get(); }
+  bool SetShowTrailingZero(bool value, FmtScope::value scope);
+  bool GetShowTrailingZero() const { return m_showTrailingZero.get(); }
 
  private:
   template <typename T>
@@ -131,25 +142,33 @@ class EmitterState {
   Setting<EMITTER_MANIP> m_boolFmt;
   Setting<EMITTER_MANIP> m_boolLengthFmt;
   Setting<EMITTER_MANIP> m_boolCaseFmt;
+  Setting<EMITTER_MANIP> m_nullFmt;
   Setting<EMITTER_MANIP> m_intFmt;
   Setting<std::size_t> m_indent;
   Setting<std::size_t> m_preCommentIndent, m_postCommentIndent;
+  Setting<std::size_t> m_wrap;  // applied to literal binary
   Setting<EMITTER_MANIP> m_seqFmt;
   Setting<EMITTER_MANIP> m_mapFmt;
   Setting<EMITTER_MANIP> m_mapKeyFmt;
-  Setting<int> m_floatPrecision;
-  Setting<int> m_doublePrecision;
+  Setting<std::size_t> m_floatPrecision;
+  Setting<std::size_t> m_doublePrecision;
+  Setting<bool>        m_showTrailingZero;
 
   SettingChanges m_modifiedSettings;
   SettingChanges m_globalModifiedSettings;
 
   struct Group {
     explicit Group(GroupType::value type_)
-        : type(type_), indent(0), childCount(0), longKey(false) {}
+        : type(type_),
+          flowType{},
+          indent(0),
+          childCount(0),
+          longKey(false),
+          modifiedSettings{} {}
 
     GroupType::value type;
     FlowType::value flowType;
-    int indent;
+    std::size_t indent;
     std::size_t childCount;
     bool longKey;
 
@@ -177,6 +196,7 @@ class EmitterState {
   std::vector<std::unique_ptr<Group>> m_groups;
   std::size_t m_curIndent;
   bool m_hasAnchor;
+  bool m_hasAlias;
   bool m_hasTag;
   bool m_hasNonContent;
   std::size_t m_docCount;
@@ -198,6 +218,6 @@ void EmitterState::_Set(Setting<T>& fmt, T value, FmtScope::value scope) {
       assert(false);
   }
 }
-}
+}  // namespace YAML
 
 #endif  // EMITTERSTATE_H_62B23520_7C8E_11DE_8A39_0800200C9A66

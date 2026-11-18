@@ -1,18 +1,27 @@
 #ifndef NODE_NODE_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define NODE_NODE_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
 
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
+
 #include <stdexcept>
+#include <string>
 
 #include "yaml-cpp/dll.h"
 #include "yaml-cpp/emitterstyle.h"
 #include "yaml-cpp/mark.h"
-#include "yaml-cpp/node/detail/bool_type.h"
 #include "yaml-cpp/node/detail/iterator_fwd.h"
 #include "yaml-cpp/node/ptr.h"
 #include "yaml-cpp/node/type.h"
@@ -38,8 +47,10 @@ class YAML_CPP_API Node {
   template <typename T, typename S>
   friend struct as_if;
 
-  typedef YAML::iterator iterator;
-  typedef YAML::const_iterator const_iterator;
+  using iterator = YAML::iterator;
+  using const_iterator = YAML::const_iterator;
+  using reverse_iterator = YAML::reverse_iterator;
+  using const_reverse_iterator = YAML::const_reverse_iterator;
 
   Node();
   explicit Node(NodeType::value type);
@@ -58,7 +69,7 @@ class YAML_CPP_API Node {
   bool IsMap() const { return Type() == NodeType::Map; }
 
   // bool conversions
-  YAML_CPP_OPERATOR_BOOL()
+  explicit operator bool() const { return IsDefined(); }
   bool operator!() const { return !IsDefined(); }
 
   // access
@@ -67,6 +78,7 @@ class YAML_CPP_API Node {
   template <typename T, typename S>
   T as(const S& fallback) const;
   const std::string& Scalar() const;
+  const std::string& UninstrumentedScalarForTesting() const;
 
   const std::string& Tag() const;
   void SetTag(const std::string& tag);
@@ -88,9 +100,13 @@ class YAML_CPP_API Node {
 
   const_iterator begin() const;
   iterator begin();
+  const_reverse_iterator rbegin() const;
+  reverse_iterator rbegin();
 
   const_iterator end() const;
   iterator end();
+  const_reverse_iterator rend() const;
+  reverse_iterator rend();
 
   // sequence
   template <typename T>
@@ -113,12 +129,17 @@ class YAML_CPP_API Node {
   template <typename Key, typename Value>
   void force_insert(const Key& key, const Value& value);
 
+  template <typename Key>
+  bool contains(const Key& key) const;
+
  private:
   enum Zombie { ZombieNode };
   explicit Node(Zombie);
+  explicit Node(Zombie, const std::string&);
   explicit Node(detail::node& node, detail::shared_memory_holder pMemory);
 
   void EnsureNodeExists() const;
+  void Invalidate();
 
   template <typename T>
   void Assign(const T& rhs);
@@ -130,6 +151,8 @@ class YAML_CPP_API Node {
 
  private:
   bool m_isValid;
+  // String representation of invalid key, if the node is invalid.
+  std::string m_invalidKey;
   mutable detail::shared_memory_holder m_pMemory;
   mutable detail::node* m_pNode;
 };
@@ -138,7 +161,7 @@ YAML_CPP_API bool operator==(const Node& lhs, const Node& rhs);
 
 YAML_CPP_API Node Clone(const Node& node);
 
-template <typename T>
+template <typename T, typename Enable = void>
 struct convert;
 }
 

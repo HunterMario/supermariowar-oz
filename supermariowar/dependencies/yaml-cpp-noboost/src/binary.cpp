@@ -1,7 +1,9 @@
 #include "yaml-cpp/binary.h"
 
+#include <cctype>
+
 namespace YAML {
-static const char encoding[] =
+static constexpr char encoding[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 std::string EncodeBase64(const unsigned char *data, std::size_t size) {
@@ -42,7 +44,7 @@ std::string EncodeBase64(const unsigned char *data, std::size_t size) {
   return ret;
 }
 
-static const unsigned char decoding[] = {
+static constexpr unsigned char decoding[] = {
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 62,  255,
@@ -64,7 +66,7 @@ static const unsigned char decoding[] = {
 };
 
 std::vector<unsigned char> DecodeBase64(const std::string &input) {
-  typedef std::vector<unsigned char> ret_type;
+  using ret_type = std::vector<unsigned char>;
   if (input.empty())
     return ret_type();
 
@@ -72,22 +74,36 @@ std::vector<unsigned char> DecodeBase64(const std::string &input) {
   unsigned char *out = &ret[0];
 
   unsigned value = 0;
+  std::size_t cnt = 0;
+  bool previous_was_padding = false;
   for (std::size_t i = 0; i < input.size(); i++) {
-    unsigned char d = decoding[static_cast<unsigned>(input[i])];
+    if (std::isspace(static_cast<unsigned char>(input[i]))) {
+      // skip newlines
+      continue;
+    }
+    unsigned char d = decoding[static_cast<unsigned char>(input[i])];
     if (d == 255)
       return ret_type();
 
     value = (value << 6) | d;
-    if (i % 4 == 3) {
+    if (cnt == 3) {
       *out++ = value >> 16;
-      if (i > 0 && input[i - 1] != '=')
+      if (!previous_was_padding)
         *out++ = value >> 8;
       if (input[i] != '=')
         *out++ = value;
+      cnt = 0;
+    } else {
+      ++cnt;
     }
+    previous_was_padding = input[i] == '=';
+  }
+  if (cnt != 0) {
+    // An invalid number of characters were encountered.
+    return ret_type();
   }
 
   ret.resize(out - &ret[0]);
   return ret;
 }
-}
+}  // namespace YAML

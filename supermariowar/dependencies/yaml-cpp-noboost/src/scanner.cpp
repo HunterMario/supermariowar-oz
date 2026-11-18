@@ -7,14 +7,33 @@
 #include "yaml-cpp/exceptions.h"  // IWYU pragma: keep
 
 namespace YAML {
+namespace {
+// IsWhitespaceToBeEaten
+// . We can eat whitespace if it's a space or tab
+// . Note: originally tabs in block context couldn't be eaten
+//         "where a simple key could be allowed
+//         (i.e., not at the beginning of a line, or following '-', '?', or
+// ':')"
+//   I think this is wrong, since tabs can be non-content whitespace; it's just
+//   that they can't contribute to indentation, so once you've seen a tab in a
+//   line, you can't start a simple key
+bool IsWhitespaceToBeEaten(char ch) { return (ch == ' ') || (ch == '\t'); }
+}  // namespace
+
 Scanner::Scanner(std::istream& in)
     : INPUT(in),
+      m_tokens{},
       m_startedStream(false),
       m_endedStream(false),
       m_simpleKeyAllowed(false),
-      m_canBeJSONFlow(false) {}
+      m_scalarValueAllowed(false),
+      m_canBeJSONFlow(false),
+      m_simpleKeys{},
+      m_indents{},
+      m_indentRefs{},
+      m_flows{} {}
 
-Scanner::~Scanner() {}
+Scanner::~Scanner() = default;
 
 bool Scanner::empty() {
   EnsureTokensInQueue();
@@ -46,7 +65,7 @@ Token& Scanner::peek() {
 Mark Scanner::mark() const { return INPUT.mark(); }
 
 void Scanner::EnsureTokensInQueue() {
-  while (1) {
+  while (true) {
     if (!m_tokens.empty()) {
       Token& token = m_tokens.front();
 
@@ -65,9 +84,9 @@ void Scanner::EnsureTokensInQueue() {
     }
 
     // no token? maybe we've actually finished
-      if (m_endedStream) {
+    if (m_endedStream) {
       return;
-      }
+    }
 
     // no? then scan...
     ScanNextToken();
@@ -83,7 +102,7 @@ void Scanner::ScanNextToken() {
     return StartStream();
   }
 
-  // get rid of whitespace, etc. (in between tokens it should be irrelevent)
+  // get rid of whitespace, etc. (in between tokens it should be irrelevant)
   ScanToNextToken();
 
   // maybe need to end some blocks
@@ -122,6 +141,17 @@ void Scanner::ScanNextToken() {
   }
 
   if (INPUT.peek() == Keys::FlowEntry) {
+    // values starting with `,` are not allowed.
+    // eg: reject `,foo`
+    if (INPUT.column() == 0) {
+      throw ParserException(INPUT.mark(), ErrorMsg::UNEXPECTED_FLOW);
+    }
+    // if we already parsed a quoted scalar value and we are not in a flow,
+    // then `,` is not a valid character.
+    // eg: reject `"foo",`
+    if (!m_scalarValueAllowed) {
+      throw ParserException(INPUT.mark(), ErrorMsg::UNEXPECTED_SCALAR);
+    }
     return ScanFlowEntry();
   }
 
@@ -151,7 +181,33 @@ void Scanner::ScanNextToken() {
   // special scalars
   if (InBlockContext() && (INPUT.peek() == Keys::LiteralScalar ||
                            INPUT.peek() == Keys::FoldedScalar)) {
+    // if we begin parsing a literal scalar with an unverified potential
+    // simple key pushed, that may be a tag to the literal scalar, and
+    // should be removed to avoid wrong indentation limit
+    // eg:
+    // - !!str |
+    //  literal
+    //  scalar
+    if (!m_simpleKeys.empty() &&
+      m_simpleKeys.top().pKey->status == Token::UNVERIFIED) {
+      // if the top of the indents does not match the unverified simple key,
+      // just invalidate the simple key and do not pop indent to avoid crash.
+      // eg: an unverified key crossing lines, like issue #1475.
+      if (m_simpleKeys.top().pIndent && !m_indents.empty() &&
+          m_indents.top() == m_simpleKeys.top().pIndent) {
+        PopIndent();
+      } else {
+        InvalidateSimpleKey();
+      }
+    }
     return ScanBlockScalar();
+  }
+
+  // if we already parsed a quoted scalar value in this line,
+  // another scalar value is an error.
+  // eg: reject `"foo" "bar"`
+  if (!m_scalarValueAllowed) {
+    throw ParserException(INPUT.mark(), ErrorMsg::UNEXPECTED_SCALAR);
   }
 
   if (INPUT.peek() == '\'' || INPUT.peek() == '\"') {
@@ -169,7 +225,7 @@ void Scanner::ScanNextToken() {
 }
 
 void Scanner::ScanToNextToken() {
-  while (1) {
+  while (true) {
     // first eat whitespace
     while (INPUT && IsWhitespaceToBeEaten(INPUT.peek())) {
       if (InBlockContext() && Exp::Tab().Matches(INPUT)) {
@@ -198,6 +254,9 @@ void Scanner::ScanToNextToken() {
     // oh yeah, and let's get rid of that simple key
     InvalidateSimpleKey();
 
+    // new line - we accept a scalar value now
+    m_scalarValueAllowed = true;
+
     // new line - we may be able to accept a simple key now
     if (InBlockContext()) {
       m_simpleKeyAllowed = true;
@@ -207,27 +266,6 @@ void Scanner::ScanToNextToken() {
 
 ///////////////////////////////////////////////////////////////////////
 // Misc. helpers
-
-// IsWhitespaceToBeEaten
-// . We can eat whitespace if it's a space or tab
-// . Note: originally tabs in block context couldn't be eaten
-//         "where a simple key could be allowed
-//         (i.e., not at the beginning of a line, or following '-', '?', or
-// ':')"
-//   I think this is wrong, since tabs can be non-content whitespace; it's just
-//   that they can't contribute to indentation, so once you've seen a tab in a
-//   line, you can't start a simple key
-bool Scanner::IsWhitespaceToBeEaten(char ch) {
-  if (ch == ' ') {
-    return true;
-  }
-
-  if (ch == '\t') {
-    return true;
-  }
-
-  return false;
-}
 
 const RegEx& Scanner::GetValueRegex() const {
   if (InBlockContext()) {
@@ -240,6 +278,7 @@ const RegEx& Scanner::GetValueRegex() const {
 void Scanner::StartStream() {
   m_startedStream = true;
   m_simpleKeyAllowed = true;
+  m_scalarValueAllowed = true;
   std::unique_ptr<IndentMarker> pIndent(
       new IndentMarker(-1, IndentMarker::NONE));
   m_indentRefs.push_back(std::move(pIndent));
@@ -256,6 +295,7 @@ void Scanner::EndStream() {
   PopAllSimpleKeys();
 
   m_simpleKeyAllowed = false;
+  m_scalarValueAllowed = false;
   m_endedStream = true;
 }
 
@@ -264,7 +304,7 @@ Token* Scanner::PushToken(Token::TYPE type) {
   return &m_tokens.back();
 }
 
-Token::TYPE Scanner::GetStartTokenFor(IndentMarker::INDENT_TYPE type) const {
+Token::TYPE Scanner::GetStartTokenFor(IndentMarker::INDENT_TYPE type) {
   switch (type) {
     case IndentMarker::SEQ:
       return Token::BLOCK_SEQ_START;
@@ -282,7 +322,7 @@ Scanner::IndentMarker* Scanner::PushIndentTo(int column,
                                              IndentMarker::INDENT_TYPE type) {
   // are we in flow?
   if (InFlowContext()) {
-    return 0;
+    return nullptr;
   }
 
   std::unique_ptr<IndentMarker> pIndent(new IndentMarker(column, type));
@@ -291,12 +331,12 @@ Scanner::IndentMarker* Scanner::PushIndentTo(int column,
 
   // is this actually an indentation?
   if (indent.column < lastIndent.column) {
-    return 0;
+    return nullptr;
   }
   if (indent.column == lastIndent.column &&
       !(indent.type == IndentMarker::SEQ &&
         lastIndent.type == IndentMarker::MAP)) {
-    return 0;
+    return nullptr;
   }
 
   // push a start token
@@ -353,6 +393,9 @@ void Scanner::PopAllIndents() {
 }
 
 void Scanner::PopIndent() {
+  if (m_indents.empty()) {
+    ThrowParserException(ErrorMsg::INDENT_STACK_UNDERFLOW);
+  }
   const IndentMarker& indent = *m_indents.top();
   m_indents.pop();
 

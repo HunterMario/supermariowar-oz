@@ -1,6 +1,7 @@
-#include <iostream>
+#include <istream>
 
 #include "stream.h"
+#include "yaml-cpp/exceptions.h"
 
 #ifndef YAML_PREFETCH_SIZE
 #define YAML_PREFETCH_SIZE 2048
@@ -111,24 +112,15 @@ static UtfIntroState s_introTransitions[][uictMax] = {
 
 static char s_introUngetCount[][uictMax] = {
     // uict00, uictBB, uictBF, uictEF, uictFE, uictFF, uictAscii, uictOther
-    {0, 1, 1, 0, 0, 0, 0, 1},
-    {0, 2, 2, 2, 2, 2, 2, 2},
-    {3, 3, 3, 3, 0, 3, 3, 3},
-    {4, 4, 4, 4, 4, 0, 4, 4},
-    {1, 1, 1, 1, 1, 1, 1, 1},
-    {1, 1, 1, 1, 1, 1, 1, 1},
-    {2, 2, 2, 2, 2, 0, 2, 2},
-    {2, 2, 2, 2, 0, 2, 2, 2},
-    {0, 1, 1, 1, 1, 1, 1, 1},
-    {0, 2, 2, 2, 2, 2, 2, 2},
-    {1, 1, 1, 1, 1, 1, 1, 1},
-    {1, 1, 1, 1, 1, 1, 1, 1},
-    {0, 2, 2, 2, 2, 2, 2, 2},
-    {0, 3, 3, 3, 3, 3, 3, 3},
-    {4, 4, 4, 4, 4, 4, 4, 4},
-    {2, 0, 2, 2, 2, 2, 2, 2},
-    {3, 3, 0, 3, 3, 3, 3, 3},
-    {1, 1, 1, 1, 1, 1, 1, 1},
+    {0, 1, 1, 0, 0, 0, 0, 1}, {0, 2, 2, 2, 2, 2, 2, 2},
+    {3, 3, 3, 3, 0, 3, 3, 3}, {4, 4, 4, 4, 4, 0, 4, 4},
+    {1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1},
+    {2, 2, 2, 2, 2, 0, 2, 2}, {2, 2, 2, 2, 0, 2, 2, 2},
+    {0, 1, 1, 1, 1, 1, 1, 1}, {0, 2, 2, 2, 2, 2, 2, 2},
+    {1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1},
+    {0, 2, 2, 2, 2, 2, 2, 2}, {0, 3, 3, 3, 3, 3, 3, 3},
+    {4, 4, 4, 4, 4, 4, 4, 4}, {2, 0, 2, 2, 2, 2, 2, 2},
+    {3, 3, 0, 3, 3, 3, 3, 3}, {1, 1, 1, 1, 1, 1, 1, 1},
 };
 
 inline UtfIntroCharType IntroCharTypeOf(std::istream::int_type ch) {
@@ -160,7 +152,8 @@ inline UtfIntroCharType IntroCharTypeOf(std::istream::int_type ch) {
 
 inline char Utf8Adjust(unsigned long ch, unsigned char lead_bits,
                        unsigned char rshift) {
-  const unsigned char header = ((1 << lead_bits) - 1) << (8 - lead_bits);
+  const unsigned char header =
+      static_cast<unsigned char>(((1 << lead_bits) - 1) << (8 - lead_bits));
   const unsigned char mask = (0xFF >> (lead_bits + 1));
   return static_cast<char>(
       static_cast<unsigned char>(header | ((ch >> rshift) & mask)));
@@ -192,21 +185,26 @@ inline void QueueUnicodeCodepoint(std::deque<char>& q, unsigned long ch) {
 
 Stream::Stream(std::istream& input)
     : m_input(input),
+      m_mark{},
+      m_charSet{},
+      m_readahead{},
       m_pPrefetched(new unsigned char[YAML_PREFETCH_SIZE]),
       m_nPrefetchedAvailable(0),
       m_nPrefetchedUsed(0) {
-  typedef std::istream::traits_type char_traits;
+  using char_traits = std::istream::traits_type;
 
-  if (!input)
-    return;
+  if (input.fail())
+    throw BadStream();
 
   // Determine (or guess) the character-set by reading the BOM, if any.  See
   // the YAML specification for the determination algorithm.
-  char_traits::int_type intro[4];
+  char_traits::int_type intro[4]{};
   int nIntroUsed = 0;
   UtfIntroState state = uis_start;
   for (; !s_introFinalState[state];) {
     std::istream::int_type ch = input.get();
+    if (input.bad() || (input.fail() && !input.eof()))
+      throw BadStream();
     intro[nIntroUsed++] = ch;
     UtfIntroCharType charType = IntroCharTypeOf(ch);
     UtfIntroState newState = s_introTransitions[state][charType];
@@ -245,7 +243,7 @@ Stream::Stream(std::istream& input)
   ReadAheadTo(0);
 }
 
-Stream::~Stream() { delete[] m_pPrefetched; }
+Stream::~Stream() = default;
 
 char Stream::peek() const {
   if (m_readahead.empty()) {
@@ -267,7 +265,24 @@ char Stream::get() {
   AdvanceCurrent();
   m_mark.column++;
 
-  if (ch == '\n') {
+  // if line ending symbol is unknown, set it to the first
+  // encountered line ending.
+  // if line ending '\r' set ending symbol to '\r'
+  // other wise set it to '\n'
+  if (!m_lineEndingSymbol) {
+    if (ch == '\n') { // line ending is '\n'
+      m_lineEndingSymbol = '\n';
+    } else if (ch == '\r') {
+      auto ch2 = peek();
+      if (ch2 == '\n') { // line ending is '\r\n'
+        m_lineEndingSymbol = '\n';
+      } else { // line ending is '\r'
+        m_lineEndingSymbol = '\r';
+      }
+    }
+  }
+
+  if (ch == m_lineEndingSymbol) {
     m_mark.column = 0;
     m_mark.line++;
   }
@@ -279,9 +294,11 @@ char Stream::get() {
 // . Extracts 'n' characters from the stream and updates our position
 std::string Stream::get(int n) {
   std::string ret;
-  ret.reserve(n);
-  for (int i = 0; i < n; i++)
-    ret += get();
+  if (n > 0) {
+    ret.reserve(static_cast<std::string::size_type>(n));
+    for (int i = 0; i < n; i++)
+      ret += get();
+  }
   return ret;
 }
 
@@ -332,7 +349,7 @@ bool Stream::_ReadAheadTo(size_t i) const {
 void Stream::StreamInUtf8() const {
   unsigned char b = GetNextByte();
   if (m_input.good()) {
-    m_readahead.push_back(b);
+    m_readahead.push_back(static_cast<char>(b));
   }
 }
 
@@ -353,7 +370,9 @@ void Stream::StreamInUtf16() const {
     // Trailing (low) surrogate...ugh, wrong order
     QueueUnicodeCodepoint(m_readahead, CP_REPLACEMENT_CHARACTER);
     return;
-  } else if (ch >= 0xD800 && ch < 0xDC00) {
+  }
+
+  if (ch >= 0xD800 && ch < 0xDC00) {
     // ch is a leading (high) surrogate
 
     // Four byte UTF-8 code point
@@ -378,11 +397,10 @@ void Stream::StreamInUtf16() const {
           // Easiest case: queue the codepoint and return
           QueueUnicodeCodepoint(m_readahead, ch);
           return;
-        } else {
-          // Start the loop over with the new high surrogate
-          ch = chLow;
-          continue;
         }
+        // Start the loop over with the new high surrogate
+        ch = chLow;
+        continue;
       }
 
       // Select the payload bits from the high surrogate
@@ -408,9 +426,16 @@ inline char* ReadBuffer(unsigned char* pBuffer) {
 unsigned char Stream::GetNextByte() const {
   if (m_nPrefetchedUsed >= m_nPrefetchedAvailable) {
     std::streambuf* pBuf = m_input.rdbuf();
-    m_nPrefetchedAvailable = static_cast<std::size_t>(
-        pBuf->sgetn(ReadBuffer(m_pPrefetched), YAML_PREFETCH_SIZE));
+    try {
+      m_nPrefetchedAvailable = static_cast<std::size_t>(
+          pBuf->sgetn(ReadBuffer(m_pPrefetched.get()), YAML_PREFETCH_SIZE));
+    } catch (const std::ios_base::failure&) {
+      throw BadStream();
+    }
     m_nPrefetchedUsed = 0;
+    if (m_input.fail()) {
+      throw BadStream();
+    }
     if (!m_nPrefetchedAvailable) {
       m_input.setstate(std::ios_base::eofbit);
     }
@@ -445,4 +470,4 @@ void Stream::StreamInUtf32() const {
 
   QueueUnicodeCodepoint(m_readahead, ch);
 }
-}
+}  // namespace YAML

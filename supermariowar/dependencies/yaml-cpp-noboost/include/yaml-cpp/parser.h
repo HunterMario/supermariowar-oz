@@ -1,17 +1,26 @@
 #ifndef PARSER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define PARSER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
 
-#include <ios>
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
+
+#include <istream>
 #include <memory>
+#include <ostream>
 
 #include "yaml-cpp/dll.h"
-#include "yaml-cpp/noncopyable.h"
 
 namespace YAML {
 class EventHandler;
@@ -24,10 +33,15 @@ struct Token;
  * A parser turns a stream of bytes into one stream of "events" per YAML
  * document in the input stream.
  */
-class YAML_CPP_API Parser : private noncopyable {
+class YAML_CPP_API Parser {
  public:
   /** Constructs an empty parser (with no input. */
   Parser();
+
+  Parser(const Parser&) = delete;
+  Parser(Parser&&) = delete;
+  Parser& operator=(const Parser&) = delete;
+  Parser& operator=(Parser&&) = delete;
 
   /**
    * Constructs a parser from the given input stream. The input stream must
@@ -47,7 +61,7 @@ class YAML_CPP_API Parser : private noncopyable {
   void Load(std::istream& in);
 
   /**
-   * Handles the next document by calling events on the {@param eventHandler}.
+   * Handles the next document by calling events on the {@code eventHandler}.
    *
    * @throw a ParserException on error.
    * @return false if there are no more documents
@@ -81,6 +95,6 @@ class YAML_CPP_API Parser : private noncopyable {
   std::unique_ptr<Scanner> m_pScanner;
   std::unique_ptr<Directives> m_pDirectives;
 };
-}
+}  // namespace YAML
 
 #endif  // PARSER_H_62B23520_7C8E_11DE_8A39_0800200C9A66

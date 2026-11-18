@@ -1,7 +1,7 @@
 #include "yaml-cpp/node/emit.h"
+#include "nodeevents.h"
 #include "yaml-cpp/emitfromevents.h"
 #include "yaml-cpp/emitter.h"
-#include "nodeevents.h"
 
 namespace YAML {
 Emitter& operator<<(Emitter& out, const Node& node) {
@@ -22,4 +22,4 @@ std::string Dump(const Node& node) {
   emitter << node;
   return emitter.c_str();
 }
-} // namespace YAML
+}  // namespace YAML

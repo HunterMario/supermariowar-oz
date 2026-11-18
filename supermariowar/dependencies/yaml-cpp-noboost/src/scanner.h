@@ -9,9 +9,7 @@
 
 #include <cstddef>
 #include <ios>
-#include <map>
 #include <queue>
-#include <set>
 #include <stack>
 #include <string>
 
@@ -49,7 +47,7 @@ class Scanner {
     enum INDENT_TYPE { MAP, SEQ, NONE };
     enum STATUS { VALID, INVALID, UNKNOWN };
     IndentMarker(int column_, INDENT_TYPE type_)
-        : column(column_), type(type_), status(VALID), pStartToken(0) {}
+        : column(column_), type(type_), status(VALID), pStartToken(nullptr) {}
 
     int column;
     INDENT_TYPE type;
@@ -90,7 +88,7 @@ class Scanner {
   bool InBlockContext() const { return m_flows.empty(); }
   std::size_t GetFlowLevel() const { return m_flows.size(); }
 
-  Token::TYPE GetStartTokenFor(IndentMarker::INDENT_TYPE type) const;
+  static Token::TYPE GetStartTokenFor(IndentMarker::INDENT_TYPE type);
 
   /**
    * Pushes an indentation onto the stack, and enqueues the proper token
@@ -130,8 +128,6 @@ class Scanner {
    * and does not parse any more tokens.
    */
   void ThrowParserException(const std::string &msg) const;
-
-  bool IsWhitespaceToBeEaten(char ch);
 
   /**
    * Returns the appropriate regex to check if the next token is a value token.
@@ -179,6 +175,7 @@ class Scanner {
   // state info
   bool m_startedStream, m_endedStream;
   bool m_simpleKeyAllowed;
+  bool m_scalarValueAllowed;
   bool m_canBeJSONFlow;
   std::stack<SimpleKey> m_simpleKeys;
   std::stack<IndentMarker *> m_indents;

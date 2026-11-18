@@ -1,24 +1,39 @@
 #ifndef NODE_DETAIL_NODE_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define NODE_DETAIL_NODE_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
 
-#include "yaml-cpp/emitterstyle.h"
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
+
 #include "yaml-cpp/dll.h"
-#include "yaml-cpp/node/type.h"
-#include "yaml-cpp/node/ptr.h"
+#include "yaml-cpp/emitterstyle.h"
 #include "yaml-cpp/node/detail/node_ref.h"
+#include "yaml-cpp/node/ptr.h"
+#include "yaml-cpp/node/type.h"
 #include <set>
+#include <atomic>
 
 namespace YAML {
 namespace detail {
 class node {
+ private:
+  struct less {
+    bool operator ()(const node* l, const node* r) const {return l->m_index < r->m_index;}
+  };
+
  public:
-  node() : m_pRef(new node_ref) {}
+  node() : m_pRef(std::make_shared<node_ref>()), m_dependencies{}, m_index{} {}
   node(const node&) = delete;
   node& operator=(const node&) = delete;
 
@@ -42,9 +57,8 @@ class node {
       return;
 
     m_pRef->mark_defined();
-    for (nodes::iterator it = m_dependencies.begin();
-         it != m_dependencies.end(); ++it)
-      (*it)->mark_defined();
+    for (node* dependency : m_dependencies)
+      dependency->mark_defined();
     m_dependencies.clear();
   }
 
@@ -106,9 +120,10 @@ class node {
   node_iterator end() { return m_pRef->end(); }
 
   // sequence
-  void push_back(node& node, shared_memory_holder pMemory) {
-    m_pRef->push_back(node, pMemory);
-    node.add_dependency(*this);
+  void push_back(node& input, shared_memory_holder pMemory) {
+    m_pRef->push_back(input, pMemory);
+    input.add_dependency(*this);
+    m_index = m_amount.fetch_add(1);
   }
   void insert(node& key, node& value, shared_memory_holder pMemory) {
     m_pRef->insert(key, value, pMemory);
@@ -120,7 +135,7 @@ class node {
   template <typename Key>
   node* get(const Key& key, shared_memory_holder pMemory) const {
     // NOTE: this returns a non-const node so that the top-level Node can wrap
-    // it, and returns a pointer so that it can be NULL (if there is no such
+    // it, and returns a pointer so that it can be nullptr (if there is no such
     // key).
     return static_cast<const node_ref&>(*m_pRef).get(key, pMemory);
   }
@@ -137,7 +152,7 @@ class node {
 
   node* get(node& key, shared_memory_holder pMemory) const {
     // NOTE: this returns a non-const node so that the top-level Node can wrap
-    // it, and returns a pointer so that it can be NULL (if there is no such
+    // it, and returns a pointer so that it can be nullptr (if there is no such
     // key).
     return static_cast<const node_ref&>(*m_pRef).get(key, pMemory);
   }
@@ -160,10 +175,12 @@ class node {
 
  private:
   shared_node_ref m_pRef;
-  typedef std::set<node*> nodes;
+  using nodes = std::set<node*, less>;
   nodes m_dependencies;
+  size_t m_index;
+  static YAML_CPP_API std::atomic<size_t> m_amount;
 };
-}
-}
+}  // namespace detail
+}  // namespace YAML
 
 #endif  // NODE_DETAIL_NODE_H_62B23520_7C8E_11DE_8A39_0800200C9A66

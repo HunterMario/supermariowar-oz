@@ -1,11 +1,20 @@
 #ifndef GRAPHBUILDER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define GRAPHBUILDER_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
+
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
 
 #include "yaml-cpp/mark.h"
 #include <string>
@@ -15,10 +24,12 @@ class Parser;
 
 // GraphBuilderInterface
 // . Abstraction of node creation
-// . pParentNode is always NULL or the return value of one of the NewXXX()
+// . pParentNode is always nullptr or the return value of one of the NewXXX()
 //   functions.
 class GraphBuilderInterface {
  public:
+  virtual ~GraphBuilderInterface() = 0;
+
   // Create and return a new node with a null value.
   virtual void *NewNull(const Mark &mark, void *pParentNode) = 0;
 
@@ -71,9 +82,9 @@ class GraphBuilder : public GraphBuilderInterface {
   typedef typename Impl::Map Map;
 
   GraphBuilder(Impl &impl) : m_impl(impl) {
-    Map *pMap = NULL;
-    Sequence *pSeq = NULL;
-    Node *pNode = NULL;
+    Map *pMap = nullptr;
+    Sequence *pSeq = nullptr;
+    Node *pNode = nullptr;
 
     // Type consistency checks
     pNode = pMap;

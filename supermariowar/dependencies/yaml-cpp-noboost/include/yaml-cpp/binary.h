@@ -1,11 +1,20 @@
 #ifndef BASE64_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define BASE64_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
+
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
 
 #include <string>
 #include <vector>
@@ -19,14 +28,18 @@ YAML_CPP_API std::vector<unsigned char> DecodeBase64(const std::string &input);
 
 class YAML_CPP_API Binary {
  public:
-  Binary() : m_unownedData(0), m_unownedSize(0) {}
   Binary(const unsigned char *data_, std::size_t size_)
-      : m_unownedData(data_), m_unownedSize(size_) {}
+      : m_data{}, m_unownedData(data_), m_unownedSize(size_) {}
+  Binary() : Binary(nullptr, 0) {}
+  Binary(const Binary &) = default;
+  Binary(Binary &&) = default;
+  Binary &operator=(const Binary &) = default;
+  Binary &operator=(Binary &&) = default;
 
   bool owned() const { return !m_unownedData; }
   std::size_t size() const { return owned() ? m_data.size() : m_unownedSize; }
   const unsigned char *data() const {
-    return owned() ? &m_data[0] : m_unownedData;
+    return owned() ? m_data.data() : m_unownedData;
   }
 
   void swap(std::vector<unsigned char> &rhs) {
@@ -35,7 +48,7 @@ class YAML_CPP_API Binary {
       rhs.clear();
       rhs.resize(m_unownedSize);
       std::copy(m_unownedData, m_unownedData + m_unownedSize, rhs.begin());
-      m_unownedData = 0;
+      m_unownedData = nullptr;
       m_unownedSize = 0;
     } else {
       m_data.swap(rhs);
@@ -62,6 +75,6 @@ class YAML_CPP_API Binary {
   const unsigned char *m_unownedData;
   std::size_t m_unownedSize;
 };
-}
+}  // namespace YAML
 
 #endif  // BASE64_H_62B23520_7C8E_11DE_8A39_0800200C9A66

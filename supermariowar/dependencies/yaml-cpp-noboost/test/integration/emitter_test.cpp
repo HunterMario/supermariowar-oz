@@ -3,6 +3,8 @@
 #include "yaml-cpp/yaml.h"  // IWYU pragma: keep
 #include "gtest/gtest.h"
 
+#include <cstdint>
+
 namespace YAML {
 namespace {
 
@@ -46,6 +48,110 @@ TEST_F(EmitterTest, SimpleScalar) {
   ExpectEmit("Hello, World!");
 }
 
+TEST_F(EmitterTest, SimpleStdStringScalar) {
+  out << std::string("Hello, std string");
+
+  ExpectEmit("Hello, std string");
+}
+
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+TEST_F(EmitterTest, SimpleStdStringViewScalar) {
+  out << std::string_view("Hello, std string view");
+
+  ExpectEmit("Hello, std string view");
+}
+
+TEST_F(EmitterTest, UnterminatedStdStringViewScalar) {
+  out << std::string_view("HelloUnterminated", 5);
+
+  ExpectEmit("Hello");
+}
+#endif
+
+TEST_F(EmitterTest, SimpleQuotedScalar) {
+  Node n(Load("\"test\""));
+  out << n;
+  ExpectEmit("test");
+}
+
+TEST_F(EmitterTest, DumpAndSize) {
+  Node n(Load("test"));
+  EXPECT_EQ("test", Dump(n));
+  out << n;
+  EXPECT_EQ(4, out.size());
+}
+
+TEST_F(EmitterTest, NullScalar) {
+  Node n(Load("null"));
+  out << n;
+  ExpectEmit("~");
+}
+
+TEST_F(EmitterTest, AliasScalar) {
+  Node n(Load("[&a str, *a]"));
+  out << n;
+  ExpectEmit("[&1 str, *1]");
+}
+
+TEST_F(EmitterTest, StringFormat) {
+  out << BeginSeq;
+  out.SetStringFormat(SingleQuoted);
+  out << "string";
+  out.SetStringFormat(DoubleQuoted);
+  out << "string";
+  out.SetStringFormat(Literal);
+  out << "string";
+  out << EndSeq;
+
+  ExpectEmit("- 'string'\n- \"string\"\n- |-\n  string");
+}
+
+TEST_F(EmitterTest, IntBase) {
+  out << BeginSeq;
+  out.SetIntBase(Dec);
+  out << 1024;
+  out.SetIntBase(Hex);
+  out << 1024;
+  out.SetIntBase(Oct);
+  out << 1024;
+  out << EndSeq;
+
+  ExpectEmit("- 1024\n- 0x400\n- 02000");
+}
+
+TEST_F(EmitterTest, UnsignedEightBitInteger) {
+  out << BeginSeq;
+  out << std::uint8_t{16};
+  out << EndSeq;
+
+  ExpectEmit("- 16");
+}
+
+TEST_F(EmitterTest, SignedEightBitInteger) {
+  // int8_t has no operator<< of its own and reaches the int overload by
+  // integral promotion; pin that so adding one cannot silently make it a char
+  out << BeginSeq;
+  out << std::int8_t{16};
+  out << std::int8_t{-7};
+  out << EndSeq;
+
+  ExpectEmit("- 16\n- -7");
+}
+
+TEST_F(EmitterTest, NumberPrecision) {
+  out.SetFloatPrecision(3);
+  out.SetDoublePrecision(2);
+  out << BeginSeq;
+  out << 3.1425926f;
+  out << 53.5893;
+  out << 2384626.4338;
+  out << 1999926.4338;
+  out << 9999926.4338;
+  out << EndSeq;
+
+  ExpectEmit("- 3.14\n- 54\n- 2.4e+06\n- 2e+06\n- 1e+07");
+}
+
 TEST_F(EmitterTest, SimpleSeq) {
   out << BeginSeq;
   out << "eggs";
@@ -73,6 +179,67 @@ TEST_F(EmitterTest, EmptyFlowSeq) {
   out << EndSeq;
 
   ExpectEmit("[]");
+}
+
+TEST_F(EmitterTest, EmptyBlockSeqWithBegunContent) {
+  out << BeginSeq;
+  out << BeginSeq << Comment("comment") << EndSeq;
+  out << BeginSeq << Newline << EndSeq;
+  out << EndSeq;
+
+  ExpectEmit(R"(-
+# comment
+  []
+-
+
+  [])");
+}
+
+TEST_F(EmitterTest, EmptyBlockMapWithBegunContent) {
+  out << BeginSeq;
+  out << BeginMap << Comment("comment") << EndMap;
+  out << BeginMap << Newline << EndMap;
+  out << EndSeq;
+
+  ExpectEmit(R"(-  # comment
+  {}
+-
+  {})");
+}
+
+TEST_F(EmitterTest, EmptyFlowSeqWithBegunContent) {
+  out << Flow;
+  out << BeginSeq;
+  out << BeginSeq << Comment("comment") << EndSeq;
+  out << BeginSeq << Newline << EndSeq;
+  out << EndSeq;
+
+  ExpectEmit(R"([[  # comment
+  ], [
+  ]])");
+}
+
+TEST_F(EmitterTest, EmptyFlowSeqInMap) {
+  out << BeginMap;
+  out << Key << Flow << BeginSeq << EndSeq;
+  out << Value << 1;
+  out << Key << 2;
+  out << Value << Flow << BeginSeq << EndSeq;
+  out << EndMap;
+
+  ExpectEmit("[]: 1\n2: []");
+}
+
+TEST_F(EmitterTest, EmptyFlowMapWithBegunContent) {
+  out << Flow;
+  out << BeginSeq;
+  out << BeginMap << Comment("comment") << EndMap;
+  out << BeginMap << Newline << EndMap;
+  out << EndSeq;
+
+  ExpectEmit(R"([{  # comment
+  }, {
+  }])");
 }
 
 TEST_F(EmitterTest, NestedBlockSeq) {
@@ -203,6 +370,8 @@ TEST_F(EmitterTest, SimpleLongKey) {
 }
 
 TEST_F(EmitterTest, SingleLongKey) {
+  const std::string shortKey(1024, 'a');
+  const std::string longKey(1025, 'a');
   out << BeginMap;
   out << Key << "age";
   out << Value << "24";
@@ -210,9 +379,14 @@ TEST_F(EmitterTest, SingleLongKey) {
   out << Value << "5'9\"";
   out << Key << "weight";
   out << Value << 145;
+  out << Key << shortKey;
+  out << Value << "1";
+  out << Key << longKey;
+  out << Value << "1";
   out << EndMap;
 
-  ExpectEmit("age: 24\n? height\n: 5'9\"\nweight: 145");
+  ExpectEmit("age: 24\n? height\n: 5'9\"\nweight: 145\n" + shortKey +
+             ": 1\n? " + longKey + "\n: 1");
 }
 
 TEST_F(EmitterTest, ComplexLongKey) {
@@ -247,19 +421,66 @@ TEST_F(EmitterTest, ScalarFormat) {
   out << DoubleQuoted << "explicit double-quoted scalar";
   out << "auto-detected\ndouble-quoted scalar";
   out << "a non-\"auto-detected\" double-quoted scalar";
-  out << Literal << "literal scalar\nthat may span\nmany, many\nlines "
-                    "and have \"whatever\" crazy\tsymbols that we like";
+  out << Literal
+      << "literal scalar\nthat may span\nmany, many\nlines "
+         "and have \"whatever\" crazy\tsymbols that we like";
   out << EndSeq;
 
   ExpectEmit(
       "- simple scalar\n- 'explicit single-quoted scalar'\n- \"explicit "
       "double-quoted scalar\"\n- \"auto-detected\\ndouble-quoted "
       "scalar\"\n- a "
-      "non-\"auto-detected\" double-quoted scalar\n- |\n  literal scalar\n "
+      "non-\"auto-detected\" double-quoted scalar\n- |-\n  literal scalar\n "
       " "
       "that may span\n  many, many\n  lines and have \"whatever\" "
       "crazy\tsymbols that we like");
 }
+
+TEST_F(EmitterTest, LiteralWithoutTrailingSpaces) {
+  out << YAML::BeginMap;
+  out << YAML::Key << "key";
+  out << YAML::Value << YAML::Literal;
+  out << "expect that with two newlines\n\n"
+         "no spaces are emitted in the empty line";
+  out << YAML::EndMap;
+
+  ExpectEmit(
+      "key: |-\n"
+      "  expect that with two newlines\n\n"
+      "  no spaces are emitted in the empty line");
+}
+
+TEST_F(EmitterTest, LiteralWithAndWithoutTrailingEmptyLines) {
+  out << BeginSeq;
+  out << Literal << "A\nB";
+  out << Literal << "A\nB\n";
+  out << Literal << "A\nB\n\n\n";
+  out << "something";
+  out << EndSeq;
+
+  ExpectEmit(
+      "- |-\n  A\n  B\n"
+      "- |\n  A\n  B\n"
+      "- |+\n  A\n  B\n\n\n"
+      "- something");
+}
+
+TEST_F(EmitterTest, SingleQuotedWithCarriageReturn) {
+  out << BeginMap;
+  out << Key << "key" << Value << SingleQuoted << "a\rb";
+  out << EndMap;
+
+  ExpectEmit("key: \"a\\rb\"");
+}
+
+TEST_F(EmitterTest, LiteralWithCarriageReturn) {
+  out << BeginMap;
+  out << Key << "key" << Value << Literal << "a\rb";
+  out << EndMap;
+
+  ExpectEmit("key: \"a\\rb\"");
+}
+
 
 TEST_F(EmitterTest, AutoLongKeyScalar) {
   out << BeginMap;
@@ -267,7 +488,7 @@ TEST_F(EmitterTest, AutoLongKeyScalar) {
   out << Value << "and its value";
   out << EndMap;
 
-  ExpectEmit("? |\n  multi-line\n  scalar\n: and its value");
+  ExpectEmit("? |-\n  multi-line\n  scalar\n: and its value");
 }
 
 TEST_F(EmitterTest, LongKeyFlowMap) {
@@ -296,6 +517,38 @@ TEST_F(EmitterTest, BlockMapAsKey) {
   ExpectEmit("? key: value\n  next key: next value\n: total value");
 }
 
+TEST_F(EmitterTest, TaggedBlockMapAsKey) {
+  out << BeginMap;
+  out << Key;
+  out << LocalTag("innerMap");
+  out << BeginMap;
+  out << Key << "key" << Value << "value";
+  out << EndMap;
+  out << Value;
+  out << "outerValue";
+  out << EndMap;
+
+  ExpectEmit(R"(? !innerMap
+  key: value
+: outerValue)");
+}
+
+TEST_F(EmitterTest, TaggedBlockListAsKey) {
+  out << BeginMap;
+  out << Key;
+  out << LocalTag("innerList");
+  out << BeginSeq;
+  out << "listItem";
+  out << EndSeq;
+  out << Value;
+  out << "outerValue";
+  out << EndMap;
+
+  ExpectEmit(R"(? !innerList
+  - listItem
+: outerValue)");
+}
+
 TEST_F(EmitterTest, AliasAndAnchor) {
   out << BeginSeq;
   out << Anchor("fred");
@@ -307,6 +560,30 @@ TEST_F(EmitterTest, AliasAndAnchor) {
   out << EndSeq;
 
   ExpectEmit("- &fred\n  name: Fred\n  age: 42\n- *fred");
+}
+
+TEST_F(EmitterTest, AnchorWithTilde) {
+  out << BeginSeq;
+  out << Anchor("foo~bar") << "value";
+  out << Alias("foo~bar");
+  out << EndSeq;
+
+  ExpectEmit("- &foo~bar value\n- *foo~bar");
+}
+
+TEST_F(EmitterTest, AliasOnKey) {
+  out << BeginSeq;
+  out << Anchor("name") << "Name";
+  out << BeginMap;
+  out << Key << Alias("name") << Value << "Fred";
+  out << EndMap;
+  out << Flow << BeginMap;
+  out << Key << Alias("name") << Value << "Mike";
+  out << EndMap;
+  out << EndSeq;
+  ExpectEmit(R"(- &name Name
+- *name : Fred
+- {*name : Mike})");
 }
 
 TEST_F(EmitterTest, AliasAndAnchorWithNull) {
@@ -370,7 +647,7 @@ TEST_F(EmitterTest, VerbatimTagInBlockMap) {
   out << Value << VerbatimTag("!waz") << "baz";
   out << EndMap;
 
-  ExpectEmit("!<!foo> bar: !<!waz> baz");
+  ExpectEmit("? !<!foo> bar\n: !<!waz> baz");
 }
 
 TEST_F(EmitterTest, VerbatimTagInFlowMap) {
@@ -422,10 +699,27 @@ TEST_F(EmitterTest, ByKindTagWithScalar) {
   ExpectEmit("- \"12\"\n- 12\n- ! 12");
 }
 
+TEST_F(EmitterTest, LocalTagInNameHandle) {
+  out << LocalTag("a", "foo") << "bar";
+
+  ExpectEmit("!a!foo bar");
+}
+
 TEST_F(EmitterTest, LocalTagWithScalar) {
   out << LocalTag("foo") << "bar";
 
   ExpectEmit("!foo bar");
+}
+
+TEST_F(EmitterTest, LocalTagRetainedAfterLoadingNode) {
+  Node n = Node("hello");
+  out << LocalTag("foo") << n;
+  std::string expected = "!foo hello";
+  ExpectEmit(expected);
+  Node yamlNode = Load(out.c_str());
+  Emitter emitter;
+  emitter << yamlNode;
+  EXPECT_EQ(expected, emitter.c_str());
 }
 
 TEST_F(EmitterTest, ComplexDoc) {
@@ -485,7 +779,7 @@ TEST_F(EmitterTest, ComplexDoc) {
       "given: Dorothy\n  family: Gale\nitems:\n  - part_no: A4786\n    "
       "descrip: Water Bucket (Filled)\n    price: 1.47\n    quantity: 4\n  - "
       "part_no: E1628\n    descrip: High Heeled \"Ruby\" Slippers\n    price: "
-      "100.27\n    quantity: 1\nbill-to: &id001\n  street: |\n    123 Tornado "
+      "100.27\n    quantity: 1\nbill-to: &id001\n  street: |-\n    123 Tornado "
       "Alley\n    Suite 16\n  city: East Westville\n  state: KS\nship-to: "
       "*id001");
 }
@@ -509,6 +803,17 @@ TEST_F(EmitterTest, STLContainers) {
   ExpectEmit("- [2, 3, 5, 7, 11, 13]\n- Daniel: 26\n  Jesse: 24");
 }
 
+TEST_F(EmitterTest, CommentStyle) {
+  out.SetPreCommentIndent(1);
+  out.SetPostCommentIndent(2);
+  out << BeginMap;
+  out << Key << "method";
+  out << Value << "least squares" << Comment("should we change this method?");
+  out << EndMap;
+
+  ExpectEmit("method: least squares #  should we change this method?");
+}
+
 TEST_F(EmitterTest, SimpleComment) {
   out << BeginMap;
   out << Key << "method";
@@ -520,15 +825,36 @@ TEST_F(EmitterTest, SimpleComment) {
 
 TEST_F(EmitterTest, MultiLineComment) {
   out << BeginSeq;
-  out << "item 1" << Comment(
-                         "really really long\ncomment that couldn't "
-                         "possibly\nfit on one line");
+  out << "item 1"
+      << Comment(
+             "really really long\ncomment that couldn't "
+             "possibly\nfit on one line");
   out << "item 2";
   out << EndSeq;
 
   ExpectEmit(
       "- item 1  # really really long\n          # comment that couldn't "
       "possibly\n          # fit on one line\n- item 2");
+}
+
+TEST_F(EmitterTest, MultiLineCommentWithCarriageReturn) {
+  out << BeginSeq;
+  out << "item 1" << Comment("really long\rcomment on two lines");
+  out << "item 2";
+  out << EndSeq;
+
+  ExpectEmit(
+      "- item 1  # really long\n          # comment on two lines\n- item 2");
+}
+
+TEST_F(EmitterTest, MultiLineCommentWithCarriageReturnLineFeed) {
+  out << BeginSeq;
+  out << "item 1" << Comment("really long\r\ncomment on two lines");
+  out << "item 2";
+  out << EndSeq;
+
+  ExpectEmit(
+      "- item 1  # really long\n          # comment on two lines\n- item 2");
 }
 
 TEST_F(EmitterTest, ComplexComments) {
@@ -604,6 +930,77 @@ TEST_F(EmitterTest, SimpleGlobalSettings) {
   ExpectEmit("-   ? key 1\n    : value 1\n    ? key 2\n    : [a, b, c]");
 }
 
+TEST_F(EmitterTest, GlobalLongKeyOnSeq) {
+  out.SetMapFormat(LongKey);
+
+  out << BeginMap;
+  out << Key << Anchor("key");
+  out << BeginSeq << "a"
+      << "b" << EndSeq;
+  out << Value << Anchor("value");
+  out << BeginSeq << "c"
+      << "d" << EndSeq;
+  out << Key << Alias("key") << Value << Alias("value");
+  out << EndMap;
+
+  ExpectEmit(R"(? &key
+  - a
+  - b
+: &value
+  - c
+  - d
+? *key
+: *value)");
+}
+
+TEST_F(EmitterTest, GlobalLongKeyOnMap) {
+  out.SetMapFormat(LongKey);
+
+  out << BeginMap;
+  out << Key << Anchor("key");
+  out << BeginMap << "a"
+      << "b" << EndMap;
+  out << Value << Anchor("value");
+  out << BeginMap << "c"
+      << "d" << EndMap;
+  out << Key << Alias("key") << Value << Alias("value");
+  out << EndMap;
+
+  ExpectEmit(R"(? &key
+  ? a
+  : b
+: &value
+  ? c
+  : d
+? *key
+: *value)");
+}
+
+TEST_F(EmitterTest, GlobalSettingStyleOnSeqNode) {
+  Node n(Load(R"(foo:
+  - 1
+  - 2
+  - 3
+bar: aa)"));
+  out.SetSeqFormat(YAML::Flow);
+  out << n;
+  ExpectEmit(R"(foo: [1, 2, 3]
+bar: aa)");
+}
+
+TEST_F(EmitterTest, GlobalSettingStyleOnMapNode) {
+  Node n(Load(R"(-
+  foo: a
+  bar: b
+- 2
+- 3)"));
+  out.SetMapFormat(YAML::Flow);
+  out << n;
+  ExpectEmit(R"(- {foo: a, bar: b}
+- 2
+- 3)");
+}
+
 TEST_F(EmitterTest, ComplexGlobalSettings) {
   out << BeginSeq;
   out << Block;
@@ -636,6 +1033,17 @@ TEST_F(EmitterTest, Null) {
   ExpectEmit("- ~\n- null value: ~\n  ~: null key");
 }
 
+TEST_F(EmitterTest, OutputCharset) {
+  out << BeginSeq;
+  out.SetOutputCharset(EmitNonAscii);
+  out << "\x24 \xC2\xA2 \xE2\x82\xAC";
+  out.SetOutputCharset(EscapeNonAscii);
+  out << "\x24 \xC2\xA2 \xE2\x82\xAC";
+  out << EndSeq;
+
+  ExpectEmit("- \x24 \xC2\xA2 \xE2\x82\xAC\n- \"\x24 \\xa2 \\u20ac\"");
+}
+
 TEST_F(EmitterTest, EscapedUnicode) {
   out << EscapeNonAscii << "\x24 \xC2\xA2 \xE2\x82\xAC \xF0\xA4\xAD\xA2";
 
@@ -650,6 +1058,47 @@ TEST_F(EmitterTest, Unicode) {
 TEST_F(EmitterTest, DoubleQuotedUnicode) {
   out << DoubleQuoted << "\x24 \xC2\xA2 \xE2\x82\xAC \xF0\xA4\xAD\xA2";
   ExpectEmit("\"\x24 \xC2\xA2 \xE2\x82\xAC \xF0\xA4\xAD\xA2\"");
+}
+
+TEST_F(EmitterTest, EscapedJsonString) {
+  out.SetStringFormat(DoubleQuoted);
+  out.SetOutputCharset(EscapeAsJson);
+  out << "\" \\ "
+    "\x01 \x02 \x03 \x04 \x05 \x06 \x07 \x08 \x09 \x0A \x0B \x0C \x0D \x0E \x0F "
+    "\x10 \x11 \x12 \x13 \x14 \x15 \x16 \x17 \x18 \x19 \x1A \x1B \x1C \x1D \x1E \x1F "
+    "\x24 \xC2\xA2 \xE2\x82\xAC \xF0\xA4\xAD\xA2";
+
+  ExpectEmit(R"("\" \\ \u0001 \u0002 \u0003 \u0004 \u0005 \u0006 \u0007 \b \t )"
+             R"(\n \u000b \f \r \u000e \u000f \u0010 \u0011 \u0012 \u0013 )"
+             R"(\u0014 \u0015 \u0016 \u0017 \u0018 \u0019 \u001a \u001b )"
+             R"(\u001c \u001d \u001e \u001f )"
+             "$ \xC2\xA2 \xE2\x82\xAC \xF0\xA4\xAD\xA2\"");
+}
+
+TEST_F(EmitterTest, EscapedCharacters) {
+  out << BeginSeq
+    << '\x00'
+    << '\x0C'
+    << '\x0D'
+    << EndSeq;
+
+  ExpectEmit("- \"\\x00\"\n- \"\\f\"\n- \"\\r\"");
+}
+
+TEST_F(EmitterTest, CharactersEscapedAsJson) {
+  out.SetOutputCharset(EscapeAsJson);
+  out << BeginSeq
+    << '\x00'
+    << '\x0C'
+    << '\x0D'
+    << EndSeq;
+
+  ExpectEmit("- \"\\u0000\"\n- \"\\f\"\n- \"\\r\"");
+}
+
+TEST_F(EmitterTest, DoubleQuotedString) {
+  out << DoubleQuoted << "\" \\ \n \t \r \b \x15 \xEF\xBB\xBF \x24";
+  ExpectEmit("\"\\\" \\\\ \\n \\t \\r \\b \\x15 \\ufeff $\"");
 }
 
 struct Foo {
@@ -675,6 +1124,14 @@ TEST_F(EmitterTest, UserType) {
   out << EndSeq;
 
   ExpectEmit("- x: 5\n  bar: hello\n- x: 3\n  bar: goodbye");
+}
+
+TEST_F(EmitterTest, UserType2) {
+  out << BeginSeq;
+  out << Foo(5, "\r");
+  out << EndSeq;
+
+  ExpectEmit("- x: 5\n  bar: \"\\r\"");
 }
 
 TEST_F(EmitterTest, UserTypeInContainer) {
@@ -800,6 +1257,95 @@ TEST_F(EmitterTest, EmptyBinary) {
   ExpectEmit("!!binary \"\"");
 }
 
+TEST_F(EmitterTest, BinaryStyles) {
+  Binary binary(reinterpret_cast<const unsigned char*>("Hello, World!"), 13);
+  out << BeginMap;
+  out << Key << "auto";
+  out << Value << Auto << binary;
+  out << Key << "single";
+  out << Value << SingleQuoted << binary;
+  out << Key << "double";
+  out << Value << DoubleQuoted << binary;
+  out << Key << "literal";
+  out << Value << Literal << binary;
+  out << Key << "literal_empty";
+  out << Value << Literal << Binary(reinterpret_cast<const unsigned char*>(""), 0);
+  out << Key << "literal_indented";
+  out << Value << Literal << Indent(8) << binary;
+  ExpectEmit(
+      "auto: !!binary \"SGVsbG8sIFdvcmxkIQ==\"\n"
+      "single: !!binary \'SGVsbG8sIFdvcmxkIQ==\'\n"
+      "double: !!binary \"SGVsbG8sIFdvcmxkIQ==\"\n"
+      "literal: !!binary |-\n"
+      "  SGVsbG8sIFdvcmxkIQ==\n"
+      "literal_empty: !!binary |-\n"
+      "\n"
+      "literal_indented: !!binary |-\n"
+      "        SGVsbG8sIFdvcmxkIQ=="
+  );
+}
+
+TEST_F(EmitterTest, BinaryWrap) {
+  Binary binary(reinterpret_cast<const unsigned char*>(
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eiusmod "
+    "tempor incididunt ut labore et dolore magna aliqua."
+    "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris "
+    "nisi ut aliquip exea commodo consequat."
+  ), 226);
+
+  out << BeginMap;
+  out << Key << "wrap80";
+  out << Value << Literal << binary;
+  out << Key << "wrap80_indent4";
+  out << Value << Literal << Indent(4) << binary;
+  out << Key << "wrap60";
+  out << Value << Literal << Wrap(60) << binary;
+  out << Key << "wrap60_indent4";
+  out << Value << Literal << Wrap(60) << Indent(4) << binary;
+  out << Key << "wrap_off";
+  out << Value << Literal << Wrap(0) << binary;
+  out << Key << "wrap_off_indent4";
+  out << Value << Literal << Wrap(0) << Indent(4) << binary;
+  ExpectEmit(
+      "wrap80: !!binary |-\n"
+      "  TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2NpbmcgZWxpdC4gU2\n"
+      "  VkIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBhbGlx\n"
+      "  dWEuVXQgZW5pbSBhZCBtaW5pbSB2ZW5pYW0sIHF1aXMgbm9zdHJ1ZCBleGVyY2l0YXRpb24gdWxsYW\n"
+      "  1jbyBsYWJvcmlzIG5pc2kgdXQgYWxpcXVpcCBleGVhIGNvbW1vZG8gY29uc2VxdWF0Lg==\n"
+      "wrap80_indent4: !!binary |-\n"
+      "    TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2NpbmcgZWxpdC4g\n"
+      "    U2VkIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBh\n"
+      "    bGlxdWEuVXQgZW5pbSBhZCBtaW5pbSB2ZW5pYW0sIHF1aXMgbm9zdHJ1ZCBleGVyY2l0YXRpb24g\n"
+      "    dWxsYW1jbyBsYWJvcmlzIG5pc2kgdXQgYWxpcXVpcCBleGVhIGNvbW1vZG8gY29uc2VxdWF0Lg==\n"
+      "wrap60: !!binary |-\n"
+      "  TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaX\n"
+      "  Bpc2NpbmcgZWxpdC4gU2VkIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQg\n"
+      "  dXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBhbGlxdWEuVXQgZW5pbSBhZC\n"
+      "  BtaW5pbSB2ZW5pYW0sIHF1aXMgbm9zdHJ1ZCBleGVyY2l0YXRpb24gdWxs\n"
+      "  YW1jbyBsYWJvcmlzIG5pc2kgdXQgYWxpcXVpcCBleGVhIGNvbW1vZG8gY2\n"
+      "  9uc2VxdWF0Lg==\n"
+      "wrap60_indent4: !!binary |-\n"
+      "    TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFk\n"
+      "    aXBpc2NpbmcgZWxpdC4gU2VkIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1\n"
+      "    bnQgdXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBhbGlxdWEuVXQgZW5p\n"
+      "    bSBhZCBtaW5pbSB2ZW5pYW0sIHF1aXMgbm9zdHJ1ZCBleGVyY2l0YXRp\n"
+      "    b24gdWxsYW1jbyBsYWJvcmlzIG5pc2kgdXQgYWxpcXVpcCBleGVhIGNv\n"
+      "    bW1vZG8gY29uc2VxdWF0Lg==\n"
+      "wrap_off: !!binary |-\n"
+      "  TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2NpbmcgZW"
+      "xpdC4gU2VkIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9yZS"
+      "BtYWduYSBhbGlxdWEuVXQgZW5pbSBhZCBtaW5pbSB2ZW5pYW0sIHF1aXMgbm9zdHJ1ZCBleG"
+      "VyY2l0YXRpb24gdWxsYW1jbyBsYWJvcmlzIG5pc2kgdXQgYWxpcXVpcCBleGVhIGNvbW1vZG"
+      "8gY29uc2VxdWF0Lg==\n"
+      "wrap_off_indent4: !!binary |-\n"
+      "    TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2Npbmcg"
+      "ZWxpdC4gU2VkIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9y"
+      "ZSBtYWduYSBhbGlxdWEuVXQgZW5pbSBhZCBtaW5pbSB2ZW5pYW0sIHF1aXMgbm9zdHJ1ZCBl"
+      "eGVyY2l0YXRpb24gdWxsYW1jbyBsYWJvcmlzIG5pc2kgdXQgYWxpcXVpcCBleGVhIGNvbW1v"
+      "ZG8gY29uc2VxdWF0Lg=="
+  );
+}
+
 TEST_F(EmitterTest, ColonAtEndOfScalar) {
   out << "a:";
   ExpectEmit("\"a:\"");
@@ -816,6 +1362,57 @@ TEST_F(EmitterTest, ColonAsScalar) {
 TEST_F(EmitterTest, ColonAtEndOfScalarInFlow) {
   out << Flow << BeginMap << Key << "C:" << Value << "C:" << EndMap;
   ExpectEmit("{\"C:\": \"C:\"}");
+}
+
+TEST_F(EmitterTest, GlobalBoolFormatting) {
+  out << BeginSeq;
+  out.SetBoolFormat(UpperCase);
+  out.SetBoolFormat(YesNoBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(TrueFalseBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(OnOffBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(LowerCase);
+  out.SetBoolFormat(YesNoBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(TrueFalseBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(OnOffBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(CamelCase);
+  out.SetBoolFormat(YesNoBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(TrueFalseBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(OnOffBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(ShortBool);
+  out.SetBoolFormat(UpperCase);
+  out.SetBoolFormat(YesNoBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(TrueFalseBool);
+  out << true;
+  out << false;
+  out.SetBoolFormat(OnOffBool);
+  out << true;
+  out << false;
+  out << EndSeq;
+  ExpectEmit(
+      "- YES\n- NO\n- TRUE\n- FALSE\n- ON\n- OFF\n"
+      "- yes\n- no\n- true\n- false\n- on\n- off\n"
+      "- Yes\n- No\n- True\n- False\n- On\n- Off\n"
+      "- Y\n- N\n- Y\n- N\n- Y\n- N");
 }
 
 TEST_F(EmitterTest, BoolFormatting) {
@@ -850,6 +1447,45 @@ TEST_F(EmitterTest, BoolFormatting) {
       "- YES\n- Yes\n- yes\n- NO\n- No\n- no\n"
       "- ON\n- On\n- on\n- OFF\n- Off\n- off\n"
       "- Y\n- Y\n- y\n- N\n- N\n- n");
+}
+
+TEST_F(EmitterTest, GlobalNullFormatting) {
+  out << Flow << BeginSeq;
+  out.SetNullFormat(LowerNull);
+  out << Null;
+  out.SetNullFormat(UpperNull);
+  out << Null;
+  out.SetNullFormat(CamelNull);
+  out << Null;
+  out.SetNullFormat(TildeNull);
+  out << Null;
+  out << EndSeq;
+  ExpectEmit("[null, NULL, Null, ~]");
+}
+
+TEST_F(EmitterTest, NullFormatting) {
+  out << Flow << BeginSeq;
+  out << LowerNull << Null;
+  out << UpperNull << Null;
+  out << CamelNull << Null;
+  out << TildeNull << Null;
+  out << EndSeq;
+  ExpectEmit("[null, NULL, Null, ~]");
+}
+
+TEST_F(EmitterTest, NullFormattingOnNode) {
+  Node n(Load("null"));
+  out << Flow << BeginSeq;
+  out.SetNullFormat(LowerNull);
+  out << n;
+  out.SetNullFormat(UpperNull);
+  out << n;
+  out.SetNullFormat(CamelNull);
+  out << n;
+  out.SetNullFormat(TildeNull);
+  out << n;
+  out << EndSeq;
+  ExpectEmit("[null, NULL, Null, ~]");
 }
 
 // TODO: Fix this test.
@@ -895,18 +1531,18 @@ TEST_F(EmitterTest, SingleChar) {
 
 TEST_F(EmitterTest, DefaultPrecision) {
   out << BeginSeq;
-  out << 1.234f;
-  out << 3.14159265358979;
+  out << 1.3125f;
+  out << 1.23455810546875;
   out << EndSeq;
-  ExpectEmit("- 1.234\n- 3.14159265358979");
+  ExpectEmit("- 1.3125\n- 1.23455810546875");
 }
 
 TEST_F(EmitterTest, SetPrecision) {
   out << BeginSeq;
-  out << FloatPrecision(3) << 1.234f;
-  out << DoublePrecision(6) << 3.14159265358979;
+  out << FloatPrecision(3) << 1.3125f;
+  out << DoublePrecision(6) << 1.23455810546875;
   out << EndSeq;
-  ExpectEmit("- 1.23\n- 3.14159");
+  ExpectEmit("- 1.31\n- 1.23456");
 }
 
 TEST_F(EmitterTest, DashInBlockContext) {
@@ -970,6 +1606,280 @@ TEST_F(EmitterTest, ValueOfDoubleQuote) {
   ExpectEmit("foo: \"\\\"\"");
 }
 
+TEST_F(EmitterTest, ValueOfBackslash) {
+  out << YAML::BeginMap;
+  out << YAML::Key << "foo" << YAML::Value << '\\';
+  out << YAML::EndMap;
+
+  ExpectEmit("foo: \"\\\\\"");
+}
+
+TEST_F(EmitterTest, Infinity) {
+  out << YAML::BeginMap;
+  out << YAML::Key << "foo" << YAML::Value
+      << std::numeric_limits<float>::infinity();
+  out << YAML::Key << "bar" << YAML::Value
+      << std::numeric_limits<double>::infinity();
+  out << YAML::EndMap;
+
+  ExpectEmit(
+      "foo: .inf\n"
+      "bar: .inf");
+}
+
+TEST_F(EmitterTest, NegInfinity) {
+  out << YAML::BeginMap;
+  out << YAML::Key << "foo" << YAML::Value
+      << -std::numeric_limits<float>::infinity();
+  out << YAML::Key << "bar" << YAML::Value
+      << -std::numeric_limits<double>::infinity();
+  out << YAML::EndMap;
+
+  ExpectEmit(
+      "foo: -.inf\n"
+      "bar: -.inf");
+}
+
+TEST_F(EmitterTest, NaN) {
+  out << YAML::BeginMap;
+  out << YAML::Key << "foo" << YAML::Value
+      << std::numeric_limits<float>::quiet_NaN();
+  out << YAML::Key << "bar" << YAML::Value
+      << std::numeric_limits<double>::quiet_NaN();
+  out << YAML::EndMap;
+
+  ExpectEmit(
+      "foo: .nan\n"
+      "bar: .nan");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapWithNewLine) {
+  out << YAML::BeginMap;
+
+  out << YAML::Key << "NodeA" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "k" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+  out << YAML::BeginMap << YAML::Key << "i" << YAML::Value << 0 << YAML::EndMap
+      << YAML::Newline;
+  out << YAML::BeginMap << YAML::Key << "i" << YAML::Value << 1 << YAML::EndMap
+      << YAML::Newline;
+  out << YAML::EndSeq;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "NodeB" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "k" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+  out << YAML::BeginMap << YAML::Key << "i" << YAML::Value << 0 << YAML::EndMap
+      << YAML::Newline;
+  out << YAML::BeginMap << YAML::Key << "i" << YAML::Value << 1 << YAML::EndMap
+      << YAML::Newline;
+  out << YAML::EndSeq;
+  out << YAML::EndMap;
+
+  out << YAML::EndMap;
+
+  ExpectEmit(R"(NodeA:
+  k: [{i: 0},
+    {i: 1},
+    ]
+NodeB:
+  k: [{i: 0},
+    {i: 1},
+    ])");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapWithNewLineUsingAliases) {
+  out << BeginMap;
+
+  out << Key << "Node" << Anchor("Node") << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << BeginMap << Key << "i" << Value << 0 << EndMap;
+  out << YAML::Newline;
+  out << BeginMap << Key << "i" << Value << 1 << EndMap;
+  out << YAML::Newline;
+  out << EndSeq << EndMap;
+
+  out << Key << "NodeA" << Alias("Node");
+  out << Key << "NodeB" << Alias("Node");
+
+  out << EndMap;
+
+  ExpectEmit(R"(Node: &Node
+  k: [{i: 0},
+    {i: 1},
+    ]
+NodeA: *Node
+NodeB: *Node)");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapUsingAliases) {
+  out << BeginMap;
+
+  out << Key << "Node" << Anchor("Node") << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << BeginMap << Key << "i" << Value << 0 << EndMap;
+  out << BeginMap << Key << "i" << Value << 1 << EndMap;
+  out << EndSeq << EndMap;
+
+  out << Key << "NodeA" << Alias("Node");
+  out << Key << "NodeB" << Alias("Node");
+
+  out << EndMap;
+
+  ExpectEmit(R"(Node: &Node
+  k: [{i: 0}, {i: 1}]
+NodeA: *Node
+NodeB: *Node)");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapWithNewLineUsingAliases2) {
+  out << BeginMap;
+
+  out << Key << "Seq" << Anchor("Seq") << Flow << BeginSeq;
+  out << BeginMap << Key << "i" << Value << 0 << EndMap;
+  out << YAML::Newline;
+  out << BeginMap << Key << "i" << Value << 1 << EndMap;
+  out << YAML::Newline;
+  out << EndSeq;
+
+  out << Key << "NodeA" << Value << BeginMap;
+  out << Key << "k" << Value << Alias("Seq") << EndMap;
+  out << Key << "NodeB" << Value << BeginMap;
+  out << Key << "k" << Value << Alias("Seq") << EndMap;
+
+  out << EndMap;
+
+  ExpectEmit(R"(Seq: &Seq [{i: 0},
+  {i: 1},
+  ]
+NodeA:
+  k: *Seq
+NodeB:
+  k: *Seq)");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapUsingAliases2) {
+  out << BeginMap;
+
+  out << Key << "Seq" << Anchor("Seq") << Value << Flow << BeginSeq;
+  out << BeginMap << Key << "i" << Value << 0 << EndMap;
+  out << BeginMap << Key << "i" << Value << 1 << EndMap;
+  out << EndSeq;
+
+  out << Key << "NodeA" << Value << BeginMap;
+  out << Key << "k" << Value << Alias("Seq") << EndMap;
+  out << Key << "NodeB" << Value << BeginMap;
+  out << Key << "k" << Value << Alias("Seq") << EndMap;
+
+  out << EndMap;
+
+  ExpectEmit(R"(Seq: &Seq [{i: 0}, {i: 1}]
+NodeA:
+  k: *Seq
+NodeB:
+  k: *Seq)");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapWithNewLineUsingAliases3) {
+  out << BeginMap;
+
+  out << Key << "Keys" << Value << Flow << BeginSeq;
+  out << Anchor("k0") << BeginMap << Key << "i" << Value << 0 << EndMap
+      << Newline;
+  out << Anchor("k1") << BeginMap << Key << "i" << Value << 1 << EndMap
+      << Newline;
+  out << EndSeq;
+
+  out << Key << "NodeA" << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << Alias("k0") << Newline << Alias("k1") << Newline;
+  out << EndSeq << EndMap;
+
+  out << Key << "NodeB" << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << Alias("k0") << Newline << Alias("k1") << Newline;
+  out << EndSeq << EndMap;
+
+  out << EndMap;
+
+  ExpectEmit(R"(Keys: [&k0 {i: 0},
+&k1 {i: 1},
+  ]
+NodeA:
+  k: [*k0,
+  *k1,
+    ]
+NodeB:
+  k: [*k0,
+  *k1,
+    ])");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapUsingAliases3a) {
+  out << BeginMap;
+
+  out << Key << "Keys" << Value << BeginSeq;
+  out << Anchor("k0") << BeginMap << Key << "i" << Value << 0 << EndMap;
+  out << Anchor("k1") << BeginMap << Key << "i" << Value << 1 << EndMap;
+  out << EndSeq;
+
+  out << Key << "NodeA" << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << Alias("k0") << Alias("k1");
+  out << EndSeq << EndMap;
+
+  out << Key << "NodeB" << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << Alias("k0") << Alias("k1");
+  out << EndSeq << EndMap;
+
+  out << EndMap;
+
+  ExpectEmit(R"(Keys:
+  - &k0
+    i: 0
+  - &k1
+    i: 1
+NodeA:
+  k: [*k0, *k1]
+NodeB:
+  k: [*k0, *k1])");
+}
+
+TEST_F(EmitterTest, ComplexFlowSeqEmbeddingAMapUsingAliases3b) {
+  out << BeginMap;
+
+  out << Key << "Keys" << Value << Flow << BeginSeq;
+  out << Anchor("k0") << BeginMap << Key << "i" << Value << 0 << EndMap;
+  out << Anchor("k1") << BeginMap << Key << "i" << Value << 1 << EndMap;
+  out << EndSeq;
+
+  out << Key << "NodeA" << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << Alias("k0") << Alias("k1");
+  out << EndSeq << EndMap;
+
+  out << Key << "NodeB" << Value << BeginMap;
+  out << Key << "k" << Value << Flow << BeginSeq;
+  out << Alias("k0") << Alias("k1");
+  out << EndSeq << EndMap;
+
+  out << EndMap;
+
+  ExpectEmit(R"(Keys: [&k0 {i: 0}, &k1 {i: 1}]
+NodeA:
+  k: [*k0, *k1]
+NodeB:
+  k: [*k0, *k1])");
+}
+
+TEST_F(EmitterTest, AnchorEncoding) {
+  Node node;
+  node["--- &$ [*$]1"] = 1;
+  out << node;
+  ExpectEmit("\"--- &$ [*$]1\": 1");
+  Node reparsed = YAML::Load(out.c_str());
+  EXPECT_EQ(reparsed["--- &$ [*$]1"].as<int>(), 1);
+}
+
 class EmitterErrorTest : public ::testing::Test {
  protected:
   void ExpectEmitError(const std::string& expectedError) {
@@ -984,6 +1894,26 @@ TEST_F(EmitterErrorTest, BadLocalTag) {
   out << LocalTag("e!far") << "bar";
 
   ExpectEmitError("invalid tag");
+}
+
+TEST_F(EmitterErrorTest, BadTagAndTag) {
+  out << VerbatimTag("!far") << VerbatimTag("!foo") << "bar";
+  ExpectEmitError(ErrorMsg::INVALID_TAG);
+}
+
+TEST_F(EmitterErrorTest, BadAnchorAndAnchor) {
+  out << Anchor("far") << Anchor("foo") << "bar";
+  ExpectEmitError(ErrorMsg::INVALID_ANCHOR);
+}
+
+TEST_F(EmitterErrorTest, BadEmptyAnchorOnGroup) {
+  out << BeginSeq << "bar" << Anchor("foo") << EndSeq;
+  ExpectEmitError(ErrorMsg::INVALID_ANCHOR);
+}
+
+TEST_F(EmitterErrorTest, BadEmptyTagOnGroup) {
+  out << BeginSeq << "bar" << VerbatimTag("!foo") << EndSeq;
+  ExpectEmitError(ErrorMsg::INVALID_TAG);
 }
 
 TEST_F(EmitterErrorTest, ExtraEndSeq) {
@@ -1020,5 +1950,188 @@ TEST_F(EmitterErrorTest, InvalidAlias) {
 
   ExpectEmitError(ErrorMsg::INVALID_ALIAS);
 }
+
+TEST_F(EmitterTest, ShowTrailingZero) {
+  out << BeginSeq;
+  out.SetShowTrailingZero(false);
+  out << 0.;
+  out << -0.;
+  out << 3.;
+  out << 42.;
+  out.SetShowTrailingZero(true);
+  out << 0.;
+  out << -0.;
+  out << 4.;
+  out << 51.;
+  out.SetShowTrailingZero(false);
+  out << 0.2;
+  out << 5.12;
+  out.SetShowTrailingZero(true);
+  out << 0.2;
+  out << 6.34;
+  out << std::numeric_limits<double>::infinity();
+  out << -std::numeric_limits<double>::infinity();
+  out << std::numeric_limits<double>::quiet_NaN();
+  out << std::numeric_limits<double>::signaling_NaN();
+  out << EndSeq;
+
+  ExpectEmit(R"(- 0
+- -0
+- 3
+- 42
+- 0.0
+- -0.0
+- 4.0
+- 51.0
+- 0.2
+- 5.12
+- 0.2
+- 6.34
+- .inf
+- -.inf
+- .nan
+- .nan)");
 }
+
+TEST_F(EmitterTest, CommentInsideMapValueIsIndented) {
+  out << YAML::BeginMap << YAML::Key << "foo" << YAML::BeginMap
+      << YAML::Comment("Comment") << YAML::Key << "bar" << YAML::Value << true
+      << YAML::EndMap << YAML::EndMap;
+
+  ExpectEmit(
+      "foo:\n"
+      "  # Comment\n"
+      "  bar: true");
 }
+
+TEST_F(EmitterTest, CommentInsideDoubleNestedMapIsIndented) {
+  out << YAML::BeginMap << YAML::Key << "map1" << YAML::Value << YAML::BeginMap
+      << YAML::Key << "map2" << YAML::Value << YAML::BeginMap
+      << YAML::Comment("nested comment") << YAML::Key << "foo" << YAML::Value
+      << "bar" << YAML::EndMap << YAML::EndMap << YAML::EndMap;
+
+  ExpectEmit(
+      "map1:\n"
+      "  map2:\n"
+      "    # nested comment\n"
+      "    foo: bar");
+}
+
+TEST_F(EmitterTest, CommentAtEndOfDoubleNestedMapIsIndented) {
+  out << YAML::BeginMap << YAML::Key << "map1" << YAML::Value << YAML::BeginMap
+      << YAML::Key << "map2" << YAML::Value << YAML::BeginMap << YAML::Key
+      << "foo" << YAML::Value << "bar" << YAML::Newline
+      << YAML::Comment("nested comment at the end") << YAML::EndMap
+      << YAML::EndMap << YAML::EndMap;
+
+  ExpectEmit(
+      "map1:\n"
+      "  map2:\n"
+      "    foo: bar\n"
+      "    # nested comment at the end");
+}
+
+TEST_F(EmitterTest, CommentAfterNestedMapUsesParentIndentation) {
+  out << YAML::BeginMap << YAML::Key << "map1" << YAML::Value << YAML::BeginMap
+      << YAML::Key << "map2" << YAML::Value << YAML::BeginMap << YAML::Key
+      << "foo" << YAML::Value << "bar" << YAML::EndMap << YAML::Newline
+      << YAML::Comment("nested comment outside of map2") << YAML::EndMap
+      << YAML::EndMap;
+
+  ExpectEmit(
+      "map1:\n"
+      "  map2:\n"
+      "    foo: bar\n"
+      "  # nested comment outside of map2");
+}
+
+TEST_F(EmitterTest, CommentInsideFlowMapIsUnaffected) {
+  out << YAML::BeginMap << YAML::Key << "some_map" << YAML::Value << YAML::Flow
+      << YAML::BeginMap << YAML::Key << "foo" << YAML::Value << "bar"
+      << YAML::Comment("comment") << YAML::Key << "key2" << YAML::Value
+      << "value2" << YAML::EndMap << YAML::EndMap;
+
+  ExpectEmit(
+      "some_map: {foo: bar,  # comment\n"
+      "key2: value2}");
+}
+
+TEST_F(EmitterTest, EmitEmptyNode) {
+  Node node;
+  out << node;
+  ExpectEmit("");
+}
+
+TEST_F(EmitterTest, EmitSetVerbatimTag) {
+  Node node, root;
+  node = 42;
+  node.SetTag("hello");
+  root["num"] = node;
+
+  out << root;
+  ExpectEmit("num: !<hello> 42");
+}
+
+// Regression for #1373: emitting a node whose tag begins with "!!"
+// (a YAML secondary tag handle, e.g. "!!str") used to bail out with
+// INVALID_TAG and truncate the output after the first '!'.
+TEST_F(EmitterTest, EmitSetTagSecondaryHandle) {
+  Node root;
+  Node string_node{"hello"};
+  string_node.SetTag("!!str");
+  root["some_string"] = string_node;
+  root["some_int"] = 2;
+
+  out << root;
+  ExpectEmit("some_string: !!str hello\nsome_int: 2");
+}
+
+TEST_F(EmitterTest, EmitSetTagPrimaryHandle) {
+  Node root;
+  Node string_node{"hello"};
+  string_node.SetTag("!mytag");
+  root["v"] = string_node;
+
+  out << root;
+  ExpectEmit("v: !mytag hello");
+}
+
+TEST_F(EmitterTest, EmitSetLocalTagInNameHandle) {
+  Node node, root;
+  node = 42;
+  node.SetTag("!a!foo");
+  root["num"] = node;
+
+  out << root;
+  ExpectEmit("num: !a!foo 42");
+}
+
+TEST_F(EmitterTest, EmitMultiDocsWithTags) {
+   out << YAML::BeginDoc
+       << YAML::LocalTag("The_Tag")
+       << YAML::BeginSeq
+       << "Some Value"
+       << YAML::EndSeq
+       << YAML::EndDoc;
+
+   out << YAML::BeginDoc
+       << YAML::LocalTag("The_Tag")
+       << YAML::BeginSeq
+       << "Some Value"
+       << YAML::EndSeq
+       << YAML::EndDoc;
+
+  ExpectEmit(
+        "---\n"
+        "!The_Tag\n"
+        "- Some Value\n"
+        "...\n"
+        "---\n"
+        "!The_Tag\n"
+        "- Some Value\n"
+        "...\n");
+}
+
+
+}  // namespace
+}  // namespace YAML

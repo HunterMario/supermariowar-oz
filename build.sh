@@ -13,9 +13,6 @@ if [[ -z "$DEVKITPRO" ]]; then
 	exit 1
 fi
 
-if [[ -z "$MAKE_OPTS" ]]; then
-	MAKE_OPTS="-j$(nproc --all)"
-fi
 
 SMW_DATA_ARCHIVE_PATH=""
 if [[ "$SKIP_DATA" != "1" ]]; then
@@ -49,7 +46,7 @@ fi
 
 mkdir -p "$PROGRAM_BUILD_DIR"
 
-source "$DEVKITPRO/switchvars.sh"
+source "$DEVKITPRO/switch2vars.sh"
 
 SWITCH_PKG_CONFIG="${PORTLIBS_PREFIX}/bin/${TOOL_PREFIX}pkg-config"
 
@@ -63,11 +60,12 @@ DEPS_PLATFORM_LIBS="$(grep -oP -- '-l\K\S*' <<< "$DEPS_LDFLAGS" | paste -sd ";" 
 
 cd "$PROGRAM_BUILD_DIR"
 cmake -G"Unix Makefiles" \
-	-DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \
+	-DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/libounce/cmake/Switch2.cmake" \
 	-DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
 	-DCMAKE_C_FLAGS="$CFLAGS $DEPS_CFLAGS $DEFINES" \
 	-DCMAKE_CXX_FLAGS="$CXXFLAGS $DEPS_CFLAGS $DEFINES" \
 	-DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS $DEPS_LDFLAGS $ADDITIONAL_LINK_FLAGS" \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 	-DPLATFORM_TARGET_LIBS:LIST="$DEPS_PLATFORM_LIBS" \
 	-DDISABLE_SYSLIB_CHECKS:BOOL="ON" \
 	-DUSE_SDL2_LIBS:BOOL="ON" -DSDL2_FORCE_GLES:BOOL="ON" \
@@ -80,7 +78,7 @@ mkdir -p "$OUT_DIR"
 
 if [[ -n "$SMW_DATA_ARCHIVE_PATH" ]]; then
 	mkdir -p "$OUT_DIR/data"
-	tar xf "$SMW_DATA_ARCHIVE_PATH" --strip-components=1 --overwrite -C "$OUT_DIR/data" 2>&1
+	gtar xf "$SMW_DATA_ARCHIVE_PATH" --strip-components=1 --overwrite -C "$OUT_DIR/data" 2>&1
 	echo "Assets copied to $OUT_DIR"
 fi
 

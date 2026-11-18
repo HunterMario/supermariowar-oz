@@ -16,10 +16,11 @@ std::string ToString(YAML::anchor_t anchor) {
   stream << anchor;
   return stream.str();
 }
-}
+}  // namespace
 
 namespace YAML {
-EmitFromEvents::EmitFromEvents(Emitter& emitter) : m_emitter(emitter) {}
+EmitFromEvents::EmitFromEvents(Emitter& emitter)
+    : m_emitter(emitter), m_stateStack{} {}
 
 void EmitFromEvents::OnDocumentStart(const Mark&) {}
 
@@ -58,6 +59,8 @@ void EmitFromEvents::OnSequenceStart(const Mark&, const std::string& tag,
     default:
       break;
   }
+  // Restore the global settings to eliminate the override from node style
+  m_emitter.RestoreGlobalModifiedSettings();
   m_emitter << BeginSeq;
   m_stateStack.push(State::WaitingForSequenceEntry);
 }
@@ -82,6 +85,8 @@ void EmitFromEvents::OnMapStart(const Mark&, const std::string& tag,
     default:
       break;
   }
+  // Restore the global settings to eliminate the override from node style
+  m_emitter.RestoreGlobalModifiedSettings();
   m_emitter << BeginMap;
   m_stateStack.push(State::WaitingForKey);
 }
@@ -111,9 +116,29 @@ void EmitFromEvents::BeginNode() {
 }
 
 void EmitFromEvents::EmitProps(const std::string& tag, anchor_t anchor) {
-  if (!tag.empty() && tag != "?")
-    m_emitter << VerbatimTag(tag);
+  if (!tag.empty() && tag != "?" && tag != "!"){
+    if (tag.size() >= 2 && tag[0] == '!' && tag[1] == '!') {
+      // Tags like "!!str" use the secondary tag handle; emit them through
+      // SecondaryTag so the rendered output keeps both bangs instead of
+      // failing the LocalTag regex check on the inner '!'. See #1373.
+      m_emitter << SecondaryTag(std::string(tag.begin()+2, tag.end()));
+    } else if (tag[0] == '!') {
+      auto prefix_end = tag.begin() + 1;
+      while (prefix_end != tag.end() && *prefix_end != '!') {
+        ++prefix_end;
+      }
+      if (prefix_end == tag.end()) {
+        m_emitter << LocalTag(std::string(tag.begin() + 1, tag.end()));
+      }
+      else {
+        m_emitter << LocalTag(std::string(tag.begin() + 1, prefix_end),
+                                std::string(prefix_end + 1, tag.end()));
+      }
+    } else {
+      m_emitter << VerbatimTag(tag);
+    }
+  }
   if (anchor)
     m_emitter << Anchor(ToString(anchor));
 }
-}
+}  // namespace YAML

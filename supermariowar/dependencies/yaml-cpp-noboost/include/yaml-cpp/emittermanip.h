@@ -1,11 +1,20 @@
 #ifndef EMITTERMANIP_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 #define EMITTERMANIP_H_62B23520_7C8E_11DE_8A39_0800200C9A66
 
+
+
+
 #if defined(_MSC_VER) ||                                            \
     (defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || \
      (__GNUC__ >= 4))  // GCC supports "pragma once" correctly since 3.4
 #pragma once
+
+
 #endif
+
+// IWYU pragma: private, include "yaml-cpp/yaml.h"
+// IWYU pragma: friend "yaml-cpp/.*"
+
 
 #include <string>
 
@@ -19,12 +28,19 @@ enum EMITTER_MANIP {
   // output character set
   EmitNonAscii,
   EscapeNonAscii,
+  EscapeAsJson,
 
   // string manipulators
   // Auto, // duplicate
   SingleQuoted,
   DoubleQuoted,
   Literal,
+
+  // null manipulators
+  LowerNull,
+  UpperNull,
+  CamelNull,
+  TildeNull,
 
   // bool manipulators
   YesNoBool,      // yes, no
@@ -69,19 +85,26 @@ struct _Indent {
 
 inline _Indent Indent(int value) { return _Indent(value); }
 
+struct _Wrap {
+  _Wrap(int value_) : value(value_) {}
+  int value;
+};
+
+inline _Wrap Wrap(int value) { return _Wrap(value); }
+
 struct _Alias {
   _Alias(const std::string& content_) : content(content_) {}
   std::string content;
 };
 
-inline _Alias Alias(const std::string content) { return _Alias(content); }
+inline _Alias Alias(const std::string& content) { return _Alias(content); }
 
 struct _Anchor {
   _Anchor(const std::string& content_) : content(content_) {}
   std::string content;
 };
 
-inline _Anchor Anchor(const std::string content) { return _Anchor(content); }
+inline _Anchor Anchor(const std::string& content) { return _Anchor(content); }
 
 struct _Tag {
   struct Type {
@@ -96,11 +119,11 @@ struct _Tag {
   Type::value type;
 };
 
-inline _Tag VerbatimTag(const std::string content) {
+inline _Tag VerbatimTag(const std::string& content) {
   return _Tag("", content, _Tag::Type::Verbatim);
 }
 
-inline _Tag LocalTag(const std::string content) {
+inline _Tag LocalTag(const std::string& content) {
   return _Tag("", content, _Tag::Type::PrimaryHandle);
 }
 
@@ -108,7 +131,7 @@ inline _Tag LocalTag(const std::string& prefix, const std::string content) {
   return _Tag(prefix, content, _Tag::Type::NamedHandle);
 }
 
-inline _Tag SecondaryTag(const std::string content) {
+inline _Tag SecondaryTag(const std::string& content) {
   return _Tag("", content, _Tag::Type::NamedHandle);
 }
 
@@ -117,7 +140,7 @@ struct _Comment {
   std::string content;
 };
 
-inline _Comment Comment(const std::string content) { return _Comment(content); }
+inline _Comment Comment(const std::string& content) { return _Comment(content); }
 
 struct _Precision {
   _Precision(int floatPrecision_, int doublePrecision_)
